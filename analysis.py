@@ -26,7 +26,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 plt.close()
- 
+
 
 # TODO: Add burstiness analysis from receiver pcap, flow level
 
@@ -111,7 +111,12 @@ def separate_samples_into_bursts(
 
 
 # %%
-OUT_DIR = "/data_hdd/incast/out/15ms-500-1-TcpDctcp-10icwnd-0offset-scheduled-rwnd1000000B-20tokens"
+OUT_DIR = "/data_hdd/incast/out/15ms-500-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens"
+OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
+if not path.isdir(OUT_DIR_GRAPHS):
+    os.makedirs(OUT_DIR_GRAPHS)
+
+# %%
 BURST_TIMES = parse_burst_times(OUT_DIR)
 # BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
 print("\n".join(str(times) for times in BURST_TIMES))
@@ -224,7 +229,7 @@ def graph_queue(
             [capacity_packets] * 2,
             label="Queue capacity",
             color="red",
-            linestyle="dashed",
+            linestyle="dotted",
             alpha=0.8,
         )
 
@@ -241,6 +246,13 @@ def graph_queue(
     # If true then scrolling while the mouse is over the canvas will not move the entire notebook
     fig.canvas.capture_scroll = True
     fig.show()
+
+    out_flp = path.join(
+        OUT_DIR_GRAPHS,
+        path.basename(OUT_DIR) + "_" + "_".join(queue_name.split(" ")).lower(),
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
 
     return burst_depths, burst_marks, burst_drops
 
@@ -331,7 +343,7 @@ def graph_active_connections(log_dir, burst_times):
         flow_times = json.load(fil)
     flow_times = parse_flow_times(flow_times)
 
-    num_bursts = len(flow_times)
+    num_bursts = len(burst_times)
     with plt.ioff():
         fig, axes = plt.subplots(
             figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
@@ -369,6 +381,12 @@ def graph_active_connections(log_dir, burst_times):
     fig.canvas.capture_scroll = True
     fig.show()
 
+    out_flp = path.join(
+        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "active_connections"
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
     return flow_times
 
 
@@ -377,7 +395,7 @@ FLOW_TIMES = graph_active_connections(path.join(OUT_DIR, "log"), BURST_TIMES)
 
 # %%
 def graph_cdf_of_flow_duration(flow_times, burst_times):
-    num_bursts = len(flow_times)
+    num_bursts = len(burst_times)
     with plt.ioff():
         fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
     if num_bursts == 1:
@@ -404,6 +422,12 @@ def graph_cdf_of_flow_duration(flow_times, burst_times):
     # If true then scrolling while the mouse is over the canvas will not move the entire notebook
     fig.canvas.capture_scroll = True
     fig.show()
+
+    out_flp = path.join(
+        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "flow_duration_cdf"
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
 
 
 graph_cdf_of_flow_duration(FLOW_TIMES, BURST_TIMES)
@@ -480,6 +504,10 @@ def graph_sender_cwnd(out_dir, burst_times, flow_times):
     # If true then scrolling while the mouse is over the canvas will not move the entire notebook
     fig.canvas.capture_scroll = True
     fig.show()
+
+    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
 
     return sender_to_cwnds_by_burst
 
@@ -727,6 +755,10 @@ def graph_aggregate_cwnd_per_burst(
     fig.canvas.capture_scroll = True
     fig.show()
 
+    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd_analysis")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
     return sender_to_cwnds_by_burst_interp
 
 
@@ -817,6 +849,12 @@ def graph_aggregate_cwnd_across_bursts(
     fig.canvas.capture_scroll = True
     fig.show()
 
+    out_flp = path.join(
+        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "combined_cwnd_analysis"
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
 
 graph_aggregate_cwnd_across_bursts(
     SENDER_TO_CWNDS_BY_BURST_INTERP, len(BURST_TIMES), INTERP_DELTA, PERCENTILES
@@ -886,6 +924,76 @@ def graph_total_cwnd(
     fig.canvas.capture_scroll = True
     fig.show()
 
+    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "total_cwnd")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
 
 BDP_BYTES = 12.5e9 / 8 * 6 * 5e-6
 graph_total_cwnd(SENDER_TO_CWNDS_BY_BURST_INTERP, BURST_TIMES, BDP_BYTES, INTERP_DELTA)
+
+
+# %%
+def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
+    num_bursts = len(burst_times)
+    with plt.ioff():
+        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, ax in enumerate(axes):
+        cwnd_down = []
+        cwnd_up = []
+        for sender_cwnds in sender_to_cwnds_by_burst.values():
+            if len(sender_cwnds[burst_idx]) < 2:
+                continue
+            _, sender_cwnds_burst = zip(*sender_cwnds[burst_idx])
+            # Compute percent difference
+            cwnd_changes = np.diff(sender_cwnds_burst) / sender_cwnds_burst[:-1] * 100
+            # Filter based on whether increase or decrease
+            cwnd_down.extend(abs(x) for x in cwnd_changes if x < 0)
+            cwnd_up.extend(x for x in cwnd_changes if x > 0)
+
+        # Plot CWND decreases
+        count, bins_count = np.histogram(cwnd_down, bins=len(cwnd_down))
+        ax.plot(
+            bins_count[1:],
+            np.cumsum(count / sum(count)),
+            alpha=0.8,
+            label="CWND decrease",
+        )
+
+        # Plot CWND increases
+        count, bins_count = np.histogram(cwnd_up, bins=len(cwnd_up))
+        ax.plot(
+            bins_count[1:],
+            np.cumsum(count / sum(count)),
+            alpha=0.8,
+            linestyle="dashed",
+            label="CWND increase",
+        )
+
+        ax.set_title(f"CDF of CWND change (%): Burst {burst_idx + 1} of {num_bursts}")
+        ax.set_xlabel("CWND change (%)")
+        ax.set_ylabel("CDF")
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0, top=1)
+        ax.legend()
+
+    plt.tight_layout()
+    # Change the toolbar position
+    fig.canvas.toolbar_position = "left"
+    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
+    fig.canvas.capture_scroll = True
+    fig.show()
+
+    out_flp = path.join(
+        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd_change_cdf"
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, BURST_TIMES)
