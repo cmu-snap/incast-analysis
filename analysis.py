@@ -1100,7 +1100,7 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
         ax.set_title(f"CDF of CWND change (%): Burst {burst_idx + 1} of {num_bursts}")
         ax.set_xlabel("CWND change (%)")
         ax.set_ylabel("CDF")
-        ax.set_xlim(left=0) 
+        ax.set_xlim(left=0)
         ax.set_ylim(bottom=0, top=1)
         ax.legend()
 
