@@ -25,22 +25,14 @@ from os import path
 import numpy as np
 from matplotlib import pyplot as plt
 
-plt.close()
+# %%
+OUT_DIR = "/data_hdd/incast/out/15ms-100-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-3g"
+OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
+if not path.isdir(OUT_DIR_GRAPHS):
+    os.makedirs(OUT_DIR_GRAPHS)
 
-
+# %%
 # TODO: Add burstiness analysis from receiver pcap, flow level
-
-
-def parse_times_line(line):
-    # Format: <start time seconds> <end time seconds>
-    parts = line.strip().split(" ")
-    assert len(parts) == 2
-    return [float(sec) for sec in parts]
-
-
-def parse_burst_times(out_dir):
-    with open(path.join(out_dir, "log", "burst_times.log"), "r") as fil:
-        return [parse_times_line(line) for line in fil if line.strip()[0] != "#"]
 
 
 def filter_samples(samples, start, end):
@@ -111,18 +103,43 @@ def separate_samples_into_bursts(
 
 
 # %%
-OUT_DIR = "/data_hdd/incast/out/15ms-500-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens"
-OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
-if not path.isdir(OUT_DIR_GRAPHS):
-    os.makedirs(OUT_DIR_GRAPHS)
+def parse_times_line(line):
+    # Format: <start time seconds> <end time seconds>
+    parts = line.strip().split(" ")
+    assert len(parts) == 2
+    return [float(sec) for sec in parts]
 
-# %%
+
+def parse_burst_times(out_dir):
+    with open(path.join(out_dir, "logs", "burst_times.log"), "r") as fil:
+        return [parse_times_line(line) for line in fil if line.strip()[0] != "#"]
+
+
+def parse_config_json(out_dir):
+    with open(path.join(out_dir, "config.json"), "r") as fil:
+        return json.load(fil)
+
+
 BURST_TIMES = parse_burst_times(OUT_DIR)
 # BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
-print("\n".join(str(times) for times in BURST_TIMES))
 
-MARKING_THRESHOLD = 80
-QUEUE_CAPACITY = 1200
+CONFIG = parse_config_json(OUT_DIR)
+
+ideal_sec = CONFIG["bytesPerSender"] * CONFIG["numSenders"] / (
+    CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8
+) + (6 * CONFIG["delayPerLinkUs"] / 1e6)
+print(
+    "Burst times:",
+    f"Ideal: {ideal_sec * 1e3:.4f} ms",
+    *[
+        f"{burst_idx + 1}: [{start} -> {end}] - {(end - start) * 1e3:.4f} ms - {(end - start) / ideal_sec * 100:.2f} %"
+        for burst_idx, (start, end) in enumerate(BURST_TIMES)
+    ],
+    sep="\n",
+)
+
+MARKING_THRESHOLD = CONFIG["smallQueueMinThresholdPackets"]
+QUEUE_CAPACITY = CONFIG["smallQueueSizePackets"]
 
 
 # %%
@@ -257,8 +274,8 @@ def graph_queue(
     return burst_depths, burst_marks, burst_drops
 
 
-BURST_DEPTHS, _, _ = graph_queue(
-    path.join(OUT_DIR, "log"),
+INCAST_Q_DEPTHS_BY_BURST, _, _ = graph_queue(
+    path.join(OUT_DIR, "logs"),
     "Incast Queue",
     BURST_TIMES,
     MARKING_THRESHOLD,
@@ -267,7 +284,7 @@ BURST_DEPTHS, _, _ = graph_queue(
 
 
 # %%
-def calculate_time_above_threshold_helper(depths, thresh, start_sec, end_sec):
+def calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_sec):
     # Identify crossover points and above regions points by filtering burst_samples.
     above_regions = []
     last_depth = None
@@ -292,7 +309,7 @@ def calculate_time_above_threshold_helper(depths, thresh, start_sec, end_sec):
     return above_sec, total_sec, above_sec / total_sec * 100
 
 
-def calculate_time_above_threshold(burst_depths, burst_times, thresh, label):
+def calculate_time_at_or_above_threshold(burst_depths, burst_times, thresh, label):
     num_bursts = len(burst_times)
     for burst_idx, (depths, (start_sec, end_sec)) in enumerate(
         zip(burst_depths, burst_times)
@@ -305,21 +322,21 @@ def calculate_time_above_threshold(burst_depths, burst_times, thresh, label):
         )
 
 
-calculate_time_above_threshold(
-    BURST_DEPTHS, BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
+calculate_time_at_or_above_threshold(
+    INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
 )
 
 # %%
-calculate_time_above_threshold(BURST_DEPTHS, BURST_TIMES, 1, "empty")
+calculate_time_at_or_above_threshold(INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, 1, "empty")
 
 # %%
-calculate_time_above_threshold(
-    BURST_DEPTHS, BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
+calculate_time_at_or_above_threshold(
+    INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
 )
 
 # %%
 _, _, _ = graph_queue(
-    path.join(OUT_DIR, "log"),
+    path.join(OUT_DIR, "logs"),
     "Uplink Queue",
     BURST_TIMES,
     MARKING_THRESHOLD,
@@ -390,7 +407,7 @@ def graph_active_connections(log_dir, burst_times):
     return flow_times
 
 
-FLOW_TIMES = graph_active_connections(path.join(OUT_DIR, "log"), BURST_TIMES)
+FLOW_TIMES = graph_active_connections(path.join(OUT_DIR, "logs"), BURST_TIMES)
 
 
 # %%
@@ -513,7 +530,7 @@ def graph_sender_cwnd(out_dir, burst_times, flow_times):
 
 
 SENDER_TO_CWNDS_BY_BURST = graph_sender_cwnd(
-    path.join(OUT_DIR, "log"), BURST_TIMES, FLOW_TIMES
+    path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
 )
 
 
@@ -770,6 +787,107 @@ SENDER_TO_CWNDS_BY_BURST_INTERP = graph_aggregate_cwnd_per_burst(
 
 
 # %%
+def calculate_average_queue_depth(burst_depths, interp_delta, bandwidth_bps):
+    num_bursts = len(burst_depths)
+    for burst_idx, depths in enumerate(burst_depths):
+        old_xs, old_ys = zip(*depths)
+        start_x = old_xs[0]
+        end_x = old_xs[-1]
+        new_xs = np.array(
+            [
+                x / interp_delta
+                for x in range(
+                    math.ceil(start_x * interp_delta),
+                    math.floor(end_x * interp_delta) + 1,
+                )
+            ]
+        )
+        new_ys = step_interp(old_xs, old_ys, new_xs)
+        avg_q_packets = new_ys.mean()
+        avg_q_bytes = avg_q_packets * BYTES_PER_PACKET
+        avg_q_us = avg_q_bytes / (bandwidth_bps / 8) * 1e6
+        print(
+            f"Burst {burst_idx + 1} of {num_bursts} - Average queue depth: {avg_q_packets:.2f} packets, {avg_q_bytes:.2f} bytes, {avg_q_us:.2f} us"
+        )
+
+
+BYTES_PER_PACKET = 1500
+BANDWIDTH_BITSPS = CONFIG["smallLinkBandwidthMbps"] * 1e6
+calculate_average_queue_depth(
+    INCAST_Q_DEPTHS_BY_BURST,
+    INTERP_DELTA,
+    BANDWIDTH_BITSPS,
+)
+
+
+# %%
+def graph_estimated_queue_ingress_rate(burst_depths, bandwidth_bps, interp_delta):
+    num_bursts = len(burst_depths)
+    with plt.ioff():
+        fig, axes = plt.subplots(
+            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
+        )
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, (ax, depths) in enumerate(zip(axes, burst_depths)):
+        old_xs, old_ys = zip(*depths)
+        start_x = old_xs[0]
+        end_x = old_xs[-1]
+        new_xs = np.array(
+            [
+                x / interp_delta
+                for x in range(
+                    math.ceil(start_x * interp_delta),
+                    math.floor(end_x * interp_delta) + 1,
+                )
+            ]
+        )
+        new_ys = step_interp(old_xs, old_ys, new_xs)
+        new_ys *= 8 * 1500
+
+        ax.set_title(
+            f"Estimated queue ingress rate: Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax.set_xlabel("time (seconds)")
+        ax.set_ylabel("ingress rate (Gbps)")
+
+        dydxs = np.gradient(new_ys, new_xs)
+
+        # print(bandwidth_bps)
+        dydxs = np.array(
+            [
+                dydx if y == 0 else (dydx + bandwidth_bps)
+                for dydx, y in zip(dydxs, new_ys)
+            ]
+        )
+        dydxs /= 1e9
+
+        ax.plot(new_xs, dydxs, alpha=0.8)
+        ax.set_ylim(bottom=min(0, min(dydxs) * 1.1))
+
+    plt.tight_layout()
+    # Change the toolbar position
+    fig.canvas.toolbar_position = "left"
+    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
+    fig.canvas.capture_scroll = True
+    fig.show()
+
+    out_flp = path.join(
+        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "queue_ingress_rate"
+    )
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+graph_estimated_queue_ingress_rate(
+    INCAST_Q_DEPTHS_BY_BURST, BANDWIDTH_BITSPS, interp_delta=1e5
+)
+
+
+# %%
 def graph_aggregate_cwnd_across_bursts(
     sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
 ):
@@ -929,7 +1047,9 @@ def graph_total_cwnd(
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-BDP_BYTES = 12.5e9 / 8 * 6 * 5e-6
+BDP_BYTES = (
+    CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8 * 6 * CONFIG["delayPerLinkUs"] / 1e6
+)
 graph_total_cwnd(SENDER_TO_CWNDS_BY_BURST_INTERP, BURST_TIMES, BDP_BYTES, INTERP_DELTA)
 
 
@@ -963,6 +1083,7 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
             np.cumsum(count / sum(count)),
             alpha=0.8,
             label="CWND decrease",
+            color="red",
         )
 
         # Plot CWND increases
@@ -973,12 +1094,13 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
             alpha=0.8,
             linestyle="dashed",
             label="CWND increase",
+            color="green",
         )
 
         ax.set_title(f"CDF of CWND change (%): Burst {burst_idx + 1} of {num_bursts}")
         ax.set_xlabel("CWND change (%)")
         ax.set_ylabel("CDF")
-        ax.set_xlim(left=0)
+        ax.set_xlim(left=0) 
         ax.set_ylim(bottom=0, top=1)
         ax.legend()
 
