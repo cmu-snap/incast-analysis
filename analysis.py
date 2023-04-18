@@ -25,11 +25,28 @@ from os import path
 import numpy as np
 from matplotlib import pyplot as plt
 
+if __name__ == "__main__":
+    RUN = True
+else:
+    RUN = False
+
+
+def maybe_show_fig(fig):
+    if RUN:
+        # Change the toolbar position
+        fig.canvas.toolbar_position = "left"
+        # If true then scrolling while the mouse is over the canvas will not move the entire notebook
+        fig.canvas.capture_scroll = True
+        fig.show()
+
+
 # %%
-OUT_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-2_2da"
-OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
-if not path.isdir(OUT_DIR_GRAPHS):
-    os.makedirs(OUT_DIR_GRAPHS)
+if RUN:
+    OUT_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-1_0da"
+    EXP = path.basename(OUT_DIR)
+    OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
+    if not path.isdir(OUT_DIR_GRAPHS):
+        os.makedirs(OUT_DIR_GRAPHS)
 
 # %%
 # TODO: Add burstiness analysis from receiver pcap, flow level
@@ -122,26 +139,24 @@ def parse_config_json(out_dir):
         return json.load(fil)
 
 
-BURST_TIMES = parse_burst_times(OUT_DIR)
-# BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
+if RUN:
+    BURST_TIMES = parse_burst_times(OUT_DIR)
+    # BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
 
-CONFIG = parse_config_json(OUT_DIR)
+    CONFIG = parse_config_json(OUT_DIR)
 
-ideal_sec = CONFIG["bytesPerSender"] * CONFIG["numSenders"] / (
-    CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8
-) + (6 * CONFIG["delayPerLinkUs"] / 1e6)
-print(
-    "Burst times:",
-    f"Ideal: {ideal_sec * 1e3:.4f} ms",
-    *[
-        f"{burst_idx + 1}: [{start} -> {end}] - {(end - start) * 1e3:.4f} ms - {(end - start) / ideal_sec * 100:.2f} %"
-        for burst_idx, (start, end) in enumerate(BURST_TIMES)
-    ],
-    sep="\n",
-)
-
-MARKING_THRESHOLD = CONFIG["smallQueueMinThresholdPackets"]
-QUEUE_CAPACITY = CONFIG["smallQueueSizePackets"]
+    ideal_sec = CONFIG["bytesPerSender"] * CONFIG["numSenders"] / (
+        CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8
+    ) + (6 * CONFIG["delayPerLinkUs"] / 1e6)
+    print(
+        "Burst times:",
+        f"Ideal: {ideal_sec * 1e3:.4f} ms",
+        *[
+            f"{burst_idx + 1}: [{start} -> {end}] - {(end - start) * 1e3:.4f} ms - {(end - start) / ideal_sec * 100:.2f} %"
+            for burst_idx, (start, end) in enumerate(BURST_TIMES)
+        ],
+        sep="\n",
+    )
 
 
 # %%
@@ -174,7 +189,12 @@ def parse_drop_line(line):
 
 
 def graph_queue(
-    out_dir, queue_name, burst_times, marking_threshold_packets, capacity_packets
+    out_dir,
+    queue_name,
+    burst_times,
+    marking_threshold_packets,
+    capacity_packets,
+    prefix,
 ):
     queue_prefix = (
         "incast_queue"
@@ -182,9 +202,9 @@ def graph_queue(
         else ("uplink_queue" if queue_name == "Uplink Queue" else None)
     )
     assert queue_prefix is not None
-    depth_flp = path.join(out_dir, f"{queue_prefix}_depth.log")
-    mark_flp = path.join(out_dir, f"{queue_prefix}_mark.log")
-    drop_flp = path.join(out_dir, f"{queue_prefix}_drop.log")
+    depth_flp = path.join(out_dir, "logs", f"{queue_prefix}_depth.log")
+    mark_flp = path.join(out_dir, "logs", f"{queue_prefix}_mark.log")
+    drop_flp = path.join(out_dir, "logs", f"{queue_prefix}_drop.log")
 
     depth_samples = []
     with open(depth_flp, "r", encoding="utf-8") as fil:
@@ -260,15 +280,12 @@ def graph_queue(
         ax.legend()
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
     out_flp = path.join(
-        OUT_DIR_GRAPHS,
-        path.basename(OUT_DIR) + "_" + "_".join(queue_name.split(" ")).lower(),
+        out_dir,
+        "graphs",
+        prefix + "_" + "_".join(queue_name.split(" ")).lower(),
     )
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
@@ -276,13 +293,17 @@ def graph_queue(
     return burst_depths, burst_marks, burst_drops
 
 
-INCAST_Q_DEPTHS_BY_BURST, _, _ = graph_queue(
-    path.join(OUT_DIR, "logs"),
-    "Incast Queue",
-    BURST_TIMES,
-    MARKING_THRESHOLD,
-    QUEUE_CAPACITY,
-)
+if RUN:
+    MARKING_THRESHOLD = CONFIG["smallQueueMinThresholdPackets"]
+    QUEUE_CAPACITY = CONFIG["smallQueueSizePackets"]
+    INCAST_Q_DEPTHS_BY_BURST, _, _ = graph_queue(
+        OUT_DIR,
+        "Incast Queue",
+        BURST_TIMES,
+        MARKING_THRESHOLD,
+        QUEUE_CAPACITY,
+        EXP,
+    )
 
 
 # %%
@@ -320,30 +341,33 @@ def calculate_time_at_or_above_threshold(burst_depths, burst_times, thresh, labe
             depths, thresh, start_sec, end_sec
         )
         print(
-            f"Burst {burst_idx + 1} of {num_bursts} - Time above {label}: {above_sec * 1e3:.2f} ms ({perc:.2f}%)"
+            f"Burst {burst_idx + 1} of {num_bursts} "
+            f"- Time above {label}: {above_sec * 1e3:.2f} ms ({perc:.2f}%)"
         )
 
 
-calculate_time_at_or_above_threshold(
-    INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
-)
+if RUN:
+    calculate_time_at_or_above_threshold(
+        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
+    )
 
 # %%
-calculate_time_at_or_above_threshold(INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, 1, "empty")
+if RUN:
+    calculate_time_at_or_above_threshold(
+        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, 1, "empty"
+    )
 
 # %%
-calculate_time_at_or_above_threshold(
-    INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
-)
+if RUN:
+    calculate_time_at_or_above_threshold(
+        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
+    )
 
 # %%
-_, _, _ = graph_queue(
-    path.join(OUT_DIR, "logs"),
-    "Uplink Queue",
-    BURST_TIMES,
-    MARKING_THRESHOLD,
-    QUEUE_CAPACITY,
-)
+if RUN:
+    _, _, _ = graph_queue(
+        OUT_DIR, "Uplink Queue", BURST_TIMES, MARKING_THRESHOLD, QUEUE_CAPACITY, EXP
+    )
 
 
 # %%
@@ -357,8 +381,10 @@ def parse_flow_times(flow_times_json):
     ]
 
 
-def graph_active_connections(log_dir, burst_times):
-    with open(path.join(log_dir, "flow_times.json"), "r", encoding="utf-8") as fil:
+def graph_active_connections(out_dir, burst_times, prefix):
+    with open(
+        path.join(out_dir, "logs", "flow_times.json"), "r", encoding="utf-8"
+    ) as fil:
         flow_times = json.load(fil)
     flow_times = parse_flow_times(flow_times)
 
@@ -377,8 +403,6 @@ def graph_active_connections(log_dir, burst_times):
         starts, _, ends, _ = zip(*times)
         serialized = [(start, 1) for start in starts] + [(end, -1) for end in ends]
         serialized = sorted(serialized, key=lambda p: p[0])
-        # earliest_time = serialized[0][0]
-        # serialized = [(x - earliest_time, y) for x, y in serialized]
         active = [serialized[0]]
         for time, action in serialized[1:]:
             active.append((time, active[-1][1] + action))
@@ -394,26 +418,21 @@ def graph_active_connections(log_dir, burst_times):
         ax.set_ylim(bottom=0)
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(
-        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "active_connections"
-    )
+    out_flp = path.join(out_dir, "graphs", prefix + "_" + "active_connections")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
     return flow_times
 
 
-FLOW_TIMES = graph_active_connections(path.join(OUT_DIR, "logs"), BURST_TIMES)
+if RUN:
+    FLOW_TIMES = graph_active_connections(OUT_DIR, BURST_TIMES, EXP)
 
 
 # %%
-def graph_cdf_of_flow_duration(flow_times, burst_times):
+def graph_cdf_of_flow_duration(flow_times, burst_times, out_dir, prefix):
     num_bursts = len(burst_times)
     with plt.ioff():
         fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
@@ -436,20 +455,15 @@ def graph_cdf_of_flow_duration(flow_times, burst_times):
         ax.set_ylim(bottom=0, top=1)
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(
-        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "flow_duration_cdf"
-    )
+    out_flp = path.join(out_dir, prefix + "_" + "flow_duration_cdf")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-graph_cdf_of_flow_duration(FLOW_TIMES, BURST_TIMES)
+if RUN:
+    graph_cdf_of_flow_duration(FLOW_TIMES, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
 
 
 # %%
@@ -471,10 +485,10 @@ def parse_sender(flp):
     return int(path.basename(flp).split("_")[0][6:])
 
 
-def graph_sender_cwnd(out_dir, burst_times, flow_times):
+def graph_sender_cwnd(out_dir, burst_times, flow_times, prefix):
     cwnd_flps = [
-        path.join(out_dir, fln)
-        for fln in os.listdir(out_dir)
+        path.join(out_dir, "logs", fln)
+        for fln in os.listdir(path.join(out_dir, "logs"))
         if fln.startswith("sender") and fln.endswith("_cwnd.log")
     ]
 
@@ -518,22 +532,17 @@ def graph_sender_cwnd(out_dir, burst_times, flow_times):
         ax.set_ylim(bottom=0)
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd")
+    out_flp = path.join(out_dir, "graphs", prefix + "_" + "cwnd")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
     return sender_to_cwnds_by_burst
 
 
-SENDER_TO_CWNDS_BY_BURST = graph_sender_cwnd(
-    path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
-)
+if RUN:
+    SENDER_TO_CWNDS_BY_BURST = graph_sender_cwnd(OUT_DIR, BURST_TIMES, FLOW_TIMES, EXP)
 
 
 # %%
@@ -740,7 +749,7 @@ def graph_aggregate_cwnd_per_burst_helper(
 
 
 def graph_aggregate_cwnd_per_burst(
-    sender_to_cwnds_by_burst, burst_times, interp_delta, percentiles
+    sender_to_cwnds_by_burst, burst_times, interp_delta, percentiles, out_dir, prefix
 ):
     num_bursts = len(burst_times)
     with plt.ioff():
@@ -768,28 +777,32 @@ def graph_aggregate_cwnd_per_burst(
         assert len(bursts_interp) == num_bursts
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd_analysis")
+    out_flp = path.join(out_dir, prefix + "_" + "cwnd_analysis")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
     return sender_to_cwnds_by_burst_interp
 
 
-INTERP_DELTA = 1e5
-PERCENTILES = [0, 25, 50, 75, 95, 100]
-SENDER_TO_CWNDS_BY_BURST_INTERP = graph_aggregate_cwnd_per_burst(
-    SENDER_TO_CWNDS_BY_BURST, BURST_TIMES, INTERP_DELTA, PERCENTILES
-)
+if RUN:
+    INTERP_DELTA = 1e5
+    PERCENTILES = [0, 25, 50, 75, 95, 100]
+    SENDER_TO_CWNDS_BY_BURST_INTERP = graph_aggregate_cwnd_per_burst(
+        SENDER_TO_CWNDS_BY_BURST,
+        BURST_TIMES,
+        INTERP_DELTA,
+        PERCENTILES,
+        OUT_DIR_GRAPHS,
+        EXP,
+    )
 
 
 # %%
-def calculate_average_queue_depth(burst_depths, interp_delta, bandwidth_bps):
+def calculate_average_queue_depth(
+    burst_depths, interp_delta, bandwidth_bps, bytes_per_packet
+):
     num_bursts = len(burst_depths)
     for burst_idx, depths in enumerate(burst_depths):
         old_xs, old_ys = zip(*depths)
@@ -806,24 +819,25 @@ def calculate_average_queue_depth(burst_depths, interp_delta, bandwidth_bps):
         )
         new_ys = step_interp(old_xs, old_ys, new_xs)
         avg_q_packets = new_ys.mean()
-        avg_q_bytes = avg_q_packets * BYTES_PER_PACKET
+        avg_q_bytes = avg_q_packets * bytes_per_packet
         avg_q_us = avg_q_bytes / (bandwidth_bps / 8) * 1e6
         print(
             f"Burst {burst_idx + 1} of {num_bursts} - Average queue depth: {avg_q_packets:.2f} packets, {avg_q_bytes:.2f} bytes, {avg_q_us:.2f} us"
         )
 
 
-BYTES_PER_PACKET = 1500
-BANDWIDTH_BITSPS = CONFIG["smallLinkBandwidthMbps"] * 1e6
-calculate_average_queue_depth(
-    INCAST_Q_DEPTHS_BY_BURST,
-    INTERP_DELTA,
-    BANDWIDTH_BITSPS,
-)
+if RUN:
+    BYTES_PER_PACKET = 1500
+    BANDWIDTH_BITSPS = CONFIG["smallLinkBandwidthMbps"] * 1e6
+    calculate_average_queue_depth(
+        INCAST_Q_DEPTHS_BY_BURST, INTERP_DELTA, BANDWIDTH_BITSPS, BYTES_PER_PACKET
+    )
 
 
 # %%
-def graph_estimated_queue_ingress_rate(burst_depths, bandwidth_bps, interp_delta):
+def graph_estimated_queue_ingress_rate(
+    burst_depths, bandwidth_bps, bytes_per_packet, interp_delta, out_dir, prefix
+):
     num_bursts = len(burst_depths)
     with plt.ioff():
         fig, axes = plt.subplots(
@@ -848,7 +862,7 @@ def graph_estimated_queue_ingress_rate(burst_depths, bandwidth_bps, interp_delta
             ]
         )
         new_ys = step_interp(old_xs, old_ys, new_xs)
-        new_ys *= 8 * 1500
+        new_ys *= 8 * bytes_per_packet
 
         ax.set_title(
             f"Estimated queue ingress rate: Burst {burst_idx + 1} of {num_bursts}"
@@ -871,27 +885,32 @@ def graph_estimated_queue_ingress_rate(burst_depths, bandwidth_bps, interp_delta
         ax.set_ylim(bottom=min(0, min(dydxs) * 1.1))
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(
-        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "queue_ingress_rate"
-    )
+    out_flp = path.join(out_dir, prefix + "_" + "queue_ingress_rate")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-graph_estimated_queue_ingress_rate(
-    INCAST_Q_DEPTHS_BY_BURST, BANDWIDTH_BITSPS, interp_delta=1e5
-)
+if RUN:
+    graph_estimated_queue_ingress_rate(
+        INCAST_Q_DEPTHS_BY_BURST,
+        BANDWIDTH_BITSPS,
+        BYTES_PER_PACKET,
+        interp_delta=1e5,
+        out_dir=OUT_DIR_GRAPHS,
+        prefix=EXP,
+    )
 
 
 # %%
 def graph_aggregate_cwnd_across_bursts(
-    sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
+    sender_to_cwnds_by_burst_interp,
+    num_bursts,
+    interp_delta,
+    percentiles,
+    out_dir,
+    prefix,
 ):
     # We always ignore the first burst, since it is different than the others
     # due to slow start.
@@ -963,27 +982,32 @@ def graph_aggregate_cwnd_across_bursts(
     axes[1].legend()
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(
-        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "combined_cwnd_analysis"
-    )
+    out_flp = path.join(out_dir, prefix + "_" + "combined_cwnd_analysis")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-graph_aggregate_cwnd_across_bursts(
-    SENDER_TO_CWNDS_BY_BURST_INTERP, len(BURST_TIMES), INTERP_DELTA, PERCENTILES
-)
+if RUN:
+    graph_aggregate_cwnd_across_bursts(
+        SENDER_TO_CWNDS_BY_BURST_INTERP,
+        len(BURST_TIMES),
+        INTERP_DELTA,
+        PERCENTILES,
+        OUT_DIR_GRAPHS,
+        EXP,
+    )
 
 
 # %%
 def graph_total_cwnd(
-    sender_to_cwnds_by_burst_interp, burst_times, bdp_bytes, interp_delta
+    sender_to_cwnds_by_burst_interp,
+    burst_times,
+    bdp_bytes,
+    interp_delta,
+    out_dir,
+    prefix,
 ):
     num_bursts = len(burst_times)
     with plt.ioff():
@@ -1038,25 +1062,29 @@ def graph_total_cwnd(
         ax[1].set_ylim(bottom=0)
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "total_cwnd")
+    out_flp = path.join(out_dir, prefix + "_" + "total_cwnd")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-BDP_BYTES = (
-    CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8 * 6 * CONFIG["delayPerLinkUs"] / 1e6
-)
-graph_total_cwnd(SENDER_TO_CWNDS_BY_BURST_INTERP, BURST_TIMES, BDP_BYTES, INTERP_DELTA)
+if RUN:
+    BDP_BYTES = (
+        CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8 * 6 * CONFIG["delayPerLinkUs"] / 1e6
+    )
+    graph_total_cwnd(
+        SENDER_TO_CWNDS_BY_BURST_INTERP,
+        BURST_TIMES,
+        BDP_BYTES,
+        INTERP_DELTA,
+        OUT_DIR_GRAPHS,
+        EXP,
+    )
 
 
 # %%
-def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
+def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times, out_dir, prefix):
     num_bursts = len(burst_times)
     with plt.ioff():
         fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
@@ -1107,25 +1135,18 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
         ax.legend()
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(
-        OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "cwnd_change_cdf"
-    )
+    out_flp = path.join(out_dir, prefix + "_" + "cwnd_change_cdf")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, BURST_TIMES)
+if RUN:
+    graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+
 
 # %%
-# Analyze congestion estimation
-
-
 def parse_congest_line(line):
     parts = line.strip().split(" ")
     assert len(parts) == 4
@@ -1163,7 +1184,7 @@ def get_sender_to_congest_by_burst(out_dir, burst_times, flow_times):
     }
 
 
-def graph_dctcp_alpha(sender_to_congest_by_burst, burst_times):
+def graph_sender_dctcp_alpha(sender_to_congest_by_burst, burst_times, out_dir, prefix):
     num_bursts = len(burst_times)
     with plt.ioff():
         fig, axes = plt.subplots(
@@ -1197,18 +1218,191 @@ def graph_dctcp_alpha(sender_to_congest_by_burst, burst_times):
         ax.set_ylim(bottom=0)
 
     plt.tight_layout()
-    # Change the toolbar position
-    fig.canvas.toolbar_position = "left"
-    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
-    fig.canvas.capture_scroll = True
-    fig.show()
+    maybe_show_fig(fig)
 
-    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "alpha")
+    out_flp = path.join(out_dir, prefix + "_" + "alpha")
     plt.savefig(out_flp + ".pdf")
     plt.savefig(out_flp + ".png", dpi=300)
 
 
-SENDER_TO_CONGEST_BY_BURST = get_sender_to_congest_by_burst(
-    path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
-)
-graph_dctcp_alpha(SENDER_TO_CONGEST_BY_BURST, BURST_TIMES)
+if RUN:
+    SENDER_TO_CONGEST_BY_BURST = get_sender_to_congest_by_burst(
+        path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
+    )
+    graph_sender_dctcp_alpha(
+        SENDER_TO_CONGEST_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP
+    )
+
+
+# %%
+def parse_rtt_line(line):
+    parts = line.strip().split(" ")
+    assert len(parts) == 2
+    time_sec, rtt_us = parts
+    time_sec = float(time_sec)
+    rtt_us = int(rtt_us)
+    return time_sec, rtt_us
+
+
+def parse_rtts(flp):
+    with open(flp, "r", encoding="utf-8") as fil:
+        return [parse_rtt_line(line) for line in fil if line.strip()[0] != "#"]
+
+
+def get_sender_to_rtts_by_burst(out_dir, burst_times, flow_times):
+    return {
+        parse_sender(flp): separate_samples_into_bursts(
+            # Read all congestion estimate samples for this sender
+            parse_rtts(flp),
+            burst_times,
+            # Look up the start and end time for this sender
+            [burst_flow_times[parse_sender(flp)] for burst_flow_times in flow_times],
+            filter_on_flow_times=True,
+            earliest_sec=False,
+            bookend=True,
+        )
+        # Look up all congestion estimate log files.
+        for flp in [
+            path.join(out_dir, fln)
+            for fln in os.listdir(out_dir)
+            if fln.startswith("sender") and fln.endswith("_rtt.log")
+        ]
+    }
+
+
+def graph_sender_rtt(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
+    num_bursts = len(burst_times)
+    with plt.ioff():
+        fig, axes = plt.subplots(
+            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
+        )
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, ax in enumerate(axes):
+        ax.set_title(
+            "Sender-measured RTT of active connections: "
+            f"Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax.set_xlabel("time (seconds)")
+        ax.set_ylabel("Sender-measured RTT (us)")
+
+        for sender, bursts in sender_to_rtts_by_burst.items():
+            if not bursts[burst_idx]:
+                continue
+            xs, ys = zip(*bursts[burst_idx])
+            ax.plot(xs, ys, "o", markersize=1.5, label=sender, alpha=0.8)
+
+        ax.set_ylim(bottom=0)
+
+    plt.tight_layout()
+    maybe_show_fig(fig)
+
+    out_flp = path.join(out_dir, prefix + "_" + "rtt")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+if RUN:
+    SENDER_TO_RTTS_BY_BURST = get_sender_to_rtts_by_burst(
+        path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
+    )
+    graph_sender_rtt(SENDER_TO_RTTS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+
+
+# %%
+def graph_rtt_cdf(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
+    num_bursts = len(burst_times)
+    with plt.ioff():
+        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, ax in enumerate(axes):
+        rtt_us = [
+            x[1]
+            for sender_rtts in sender_to_rtts_by_burst.values()
+            for x in sender_rtts[burst_idx]
+        ]
+
+        # Plot CDF of ACK size across all senders
+        count, bins_count = np.histogram(rtt_us, bins=len(rtt_us))
+        ax.plot(
+            bins_count[1:],
+            np.cumsum(count / sum(count)),
+            alpha=0.8,
+            label="ACKed MSS",
+        )
+
+        ax.set_title(f"CDF of RTT (us): Burst {burst_idx + 1} of {num_bursts}")
+        ax.set_xlabel("RTT (us)")
+        ax.set_ylabel("CDF")
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0, top=1)
+
+    plt.tight_layout()
+    maybe_show_fig(fig)
+
+    out_flp = path.join(out_dir, prefix + "_" + "rtt_cdf")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+if RUN:
+    graph_rtt_cdf(SENDER_TO_RTTS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+
+
+# %%
+def graph_ack_size_cdf(sender_to_congest_by_burst, burst_times, mss, out_dir, prefix):
+    num_bursts = len(burst_times)
+    with plt.ioff():
+        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, ax in enumerate(axes):
+        ack_bytes = [
+            x[2] / MSS
+            for sender_congests in sender_to_congest_by_burst.values()
+            for x in sender_congests[burst_idx]
+        ]
+
+        # Plot CDF of ACK size across all senders
+        count, bins_count = np.histogram(ack_bytes, bins=len(ack_bytes))
+        ax.plot(
+            bins_count[1:],
+            np.cumsum(count / sum(count)),
+            alpha=0.8,
+            label="ACKed MSS",
+        )
+
+        ax.set_title(f"CDF of ACKed MSS: Burst {burst_idx + 1} of {num_bursts}")
+        ax.set_xlabel("ACKed MSS")
+        ax.set_ylabel("CDF")
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0, top=1)
+
+    plt.tight_layout()
+    maybe_show_fig(fig)
+
+    out_flp = path.join(out_dir, prefix + "_" + "acks_cdf")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+if RUN:
+    MSS = 1448
+    graph_ack_size_cdf(
+        SENDER_TO_CONGEST_BY_BURST, BURST_TIMES, MSS, OUT_DIR_GRAPHS, EXP
+    )
+
+
+# %%
+def print_test():
+    print("test")
