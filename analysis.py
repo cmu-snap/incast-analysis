@@ -26,7 +26,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 # %%
-OUT_DIR = "/data_hdd/incast/out/15ms-100-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-3g"
+OUT_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-2_2da"
 OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
 if not path.isdir(OUT_DIR_GRAPHS):
     os.makedirs(OUT_DIR_GRAPHS)
@@ -111,12 +111,14 @@ def parse_times_line(line):
 
 
 def parse_burst_times(out_dir):
-    with open(path.join(out_dir, "logs", "burst_times.log"), "r") as fil:
+    with open(
+        path.join(out_dir, "logs", "burst_times.log"), "r", encoding="utf-8"
+    ) as fil:
         return [parse_times_line(line) for line in fil if line.strip()[0] != "#"]
 
 
 def parse_config_json(out_dir):
-    with open(path.join(out_dir, "config.json"), "r") as fil:
+    with open(path.join(out_dir, "config.json"), "r", encoding="utf-8") as fil:
         return json.load(fil)
 
 
@@ -185,19 +187,19 @@ def graph_queue(
     drop_flp = path.join(out_dir, f"{queue_prefix}_drop.log")
 
     depth_samples = []
-    with open(depth_flp, "r") as fil:
+    with open(depth_flp, "r", encoding="utf-8") as fil:
         depth_samples = [
             parse_queue_line(line) for line in fil if line.strip()[0] != "#"
         ]
     burst_depths = separate_samples_into_bursts(depth_samples, burst_times)
 
     mark_samples = []
-    with open(mark_flp, "r") as fil:
+    with open(mark_flp, "r", encoding="utf-8") as fil:
         mark_samples = [parse_mark_line(line) for line in fil if line.strip()[0] != "#"]
     burst_marks = separate_samples_into_bursts(mark_samples, burst_times, bookend=False)
 
     drop_samples = []
-    with open(drop_flp, "r") as fil:
+    with open(drop_flp, "r", encoding="utf-8") as fil:
         drop_samples = [parse_drop_line(line) for line in fil if line.strip()[0] != "#"]
     burst_drops = separate_samples_into_bursts(drop_samples, burst_times, bookend=False)
 
@@ -314,7 +316,7 @@ def calculate_time_at_or_above_threshold(burst_depths, burst_times, thresh, labe
     for burst_idx, (depths, (start_sec, end_sec)) in enumerate(
         zip(burst_depths, burst_times)
     ):
-        above_sec, total_sec, perc = calculate_time_above_threshold_helper(
+        above_sec, total_sec, perc = calculate_time_at_or_above_threshold_helper(
             depths, thresh, start_sec, end_sec
         )
         print(
@@ -356,7 +358,7 @@ def parse_flow_times(flow_times_json):
 
 
 def graph_active_connections(log_dir, burst_times):
-    with open(path.join(log_dir, "flow_times.json"), "r") as fil:
+    with open(path.join(log_dir, "flow_times.json"), "r", encoding="utf-8") as fil:
         flow_times = json.load(fil)
     flow_times = parse_flow_times(flow_times)
 
@@ -461,7 +463,7 @@ def parse_cwnd_line(line):
 
 
 def parse_cwnds(flp):
-    with open(flp, "r") as fil:
+    with open(flp, "r", encoding="utf-8") as fil:
         return [parse_cwnd_line(line) for line in fil if line.strip()[0] != "#"]
 
 
@@ -1119,3 +1121,94 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times):
 
 
 graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, BURST_TIMES)
+
+# %%
+# Analyze congestion estimation
+
+
+def parse_congest_line(line):
+    parts = line.strip().split(" ")
+    assert len(parts) == 4
+    time_sec, acked_ecn_bytes, total_acked_bytes, alpha = parts
+    time_sec = float(time_sec)
+    acked_ecn_bytes = int(acked_ecn_bytes)
+    total_acked_bytes = int(total_acked_bytes)
+    alpha = float(alpha)
+    return time_sec, acked_ecn_bytes, total_acked_bytes, alpha
+
+
+def parse_congest(flp):
+    with open(flp, "r", encoding="utf-8") as fil:
+        return [parse_congest_line(line) for line in fil if line.strip()[0] != "#"]
+
+
+def get_sender_to_congest_by_burst(out_dir, burst_times, flow_times):
+    return {
+        parse_sender(flp): separate_samples_into_bursts(
+            # Read all congestion estimate samples for this sender
+            parse_congest(flp),
+            burst_times,
+            # Look up the start and end time for this sender
+            [burst_flow_times[parse_sender(flp)] for burst_flow_times in flow_times],
+            filter_on_flow_times=True,
+            earliest_sec=False,
+            bookend=True,
+        )
+        # Look up all congestion estimate log files.
+        for flp in [
+            path.join(out_dir, fln)
+            for fln in os.listdir(out_dir)
+            if fln.startswith("sender") and fln.endswith("_congest.log")
+        ]
+    }
+
+
+def graph_dctcp_alpha(sender_to_congest_by_burst, burst_times):
+    num_bursts = len(burst_times)
+    with plt.ioff():
+        fig, axes = plt.subplots(
+            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
+        )
+    if num_bursts == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for burst_idx, ax in enumerate(axes):
+        ax.set_title(
+            f"Alpha of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax.set_xlabel("time (seconds)")
+        ax.set_ylabel("alpha")
+
+        for sender, bursts in sender_to_congest_by_burst.items():
+            if not bursts[burst_idx]:
+                continue
+            xs, _, _, ys = zip(*bursts[burst_idx])
+            ax.plot(
+                xs,
+                ys,
+                "o",
+                markersize=1.5,
+                label=sender,
+                alpha=0.8,
+            )
+
+        ax.set_ylim(bottom=0)
+
+    plt.tight_layout()
+    # Change the toolbar position
+    fig.canvas.toolbar_position = "left"
+    # If true then scrolling while the mouse is over the canvas will not move the entire notebook
+    fig.canvas.capture_scroll = True
+    fig.show()
+
+    out_flp = path.join(OUT_DIR_GRAPHS, path.basename(OUT_DIR) + "_" + "alpha")
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+SENDER_TO_CONGEST_BY_BURST = get_sender_to_congest_by_burst(
+    path.join(OUT_DIR, "logs"), BURST_TIMES, FLOW_TIMES
+)
+graph_dctcp_alpha(SENDER_TO_CONGEST_BY_BURST, BURST_TIMES)
