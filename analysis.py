@@ -32,27 +32,50 @@ if __name__ == "__main__":
 else:
     RUN = False
 
-
-def maybe_show_fig(fig):
-    if RUN:
-        # Change the toolbar position
-        fig.canvas.toolbar_position = "left"
-        # If true then scrolling while the mouse is over the canvas will not
-        # move the entire notebook
-        fig.canvas.capture_scroll = True
-        fig.show()
-
-
 # %%
 if RUN:
-    OUT_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-1_0da"
-    EXP = path.basename(OUT_DIR)
-    OUT_DIR_GRAPHS = path.join(OUT_DIR, "graphs")
-    if not path.isdir(OUT_DIR_GRAPHS):
-        os.makedirs(OUT_DIR_GRAPHS)
+    EXP_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-1_0da"
+    EXP = path.basename(EXP_DIR)
+    GRAPH_DIR = path.join(EXP_DIR, "graphs")
+    if not path.isdir(GRAPH_DIR):
+        os.makedirs(GRAPH_DIR)
 
 
 # %%
+def show(fig):
+    plt.tight_layout()
+    # Change the toolbar position
+    fig.canvas.toolbar_position = "left"
+    # If true then scrolling while the mouse is over the canvas will not
+    # move the entire notebook
+    fig.canvas.capture_scroll = True
+    fig.show()
+
+
+def save(graph_dir, prefix=None, suffix=None):
+    assert prefix is not None or suffix is not None
+    both_defined = prefix is not None and suffix is not None
+    out_flp = path.join(
+        graph_dir,
+        ("" if prefix is None else prefix)
+        + ("_" if both_defined else "")
+        + ("" if suffix is None else suffix),
+    )
+    plt.tight_layout()
+    plt.savefig(out_flp + ".pdf")
+    plt.savefig(out_flp + ".png", dpi=300)
+
+
+def get_axes(rows, width=10, cols=1):
+    with plt.ioff():
+        fig, axes = plt.subplots(figsize=(width, 3 * rows), nrows=rows, ncols=cols)
+    if rows == 1:
+        axes = [axes]
+    elif cols == 1:
+        axes = axes.flatten()
+    return fig, axes
+
+
 def filter_samples(samples, start, end):
     return [sample for sample in samples if start <= sample[0] <= end]
 
@@ -128,23 +151,25 @@ def parse_times_line(line):
     return [float(sec) for sec in parts]
 
 
-def get_burst_times(out_dir):
+def get_burst_times(exp_dir):
     with open(
-        path.join(out_dir, "logs", "burst_times.log"), "r", encoding="utf-8"
+        path.join(exp_dir, "logs", "burst_times.log"), "r", encoding="utf-8"
     ) as fil:
         return [parse_times_line(line) for line in fil if line.strip()[0] != "#"]
 
 
-def get_config_json(out_dir):
-    with open(path.join(out_dir, "config.json"), "r", encoding="utf-8") as fil:
+def get_config_json(exp_dir):
+    with open(path.join(exp_dir, "config.json"), "r", encoding="utf-8") as fil:
         return json.load(fil)
 
 
 if RUN:
-    BURST_TIMES = get_burst_times(OUT_DIR)
+    BURST_TIMES = get_burst_times(EXP_DIR)
     # BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
 
-    CONFIG = get_config_json(OUT_DIR)
+    NUM_BURSTS = len(BURST_TIMES)
+    CONFIG = get_config_json(EXP_DIR)
+    assert NUM_BURSTS == CONFIG["numBursts"]
 
     ideal_sec = CONFIG["bytesPerSender"] * CONFIG["numSenders"] / (
         CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8
@@ -193,10 +218,10 @@ def parse_drop_line(line):
     return time_sec, drop_type
 
 
-def get_depths(out_dir, queue_prefix, burst_times):
+def get_depths_by_burst(exp_dir, queue_prefix, burst_times):
     depth_samples = []
     with open(
-        path.join(out_dir, "logs", f"{queue_prefix}_depth.log"), "r", encoding="utf-8"
+        path.join(exp_dir, "logs", f"{queue_prefix}_depth.log"), "r", encoding="utf-8"
     ) as fil:
         depth_samples = [
             parse_depth_line(line) for line in fil if line.strip()[0] != "#"
@@ -204,58 +229,50 @@ def get_depths(out_dir, queue_prefix, burst_times):
     return separate_samples_into_bursts(depth_samples, burst_times)
 
 
-def get_marks(out_dir, queue_prefix, burst_times):
+def get_marks_by_burst(exp_dir, queue_prefix, burst_times):
     mark_samples = []
     with open(
-        path.join(out_dir, "logs", f"{queue_prefix}_mark.log"), "r", encoding="utf-8"
+        path.join(exp_dir, "logs", f"{queue_prefix}_mark.log"), "r", encoding="utf-8"
     ) as fil:
         mark_samples = [parse_mark_line(line) for line in fil if line.strip()[0] != "#"]
     return separate_samples_into_bursts(mark_samples, burst_times, bookend=False)
 
 
-def get_drops(out_dir, queue_prefix, burst_times):
+def get_drops_by_burst(exp_dir, queue_prefix, burst_times):
     drop_samples = []
     with open(
-        path.join(out_dir, "logs", f"{queue_prefix}_drop.log"), "r", encoding="utf-8"
+        path.join(exp_dir, "logs", f"{queue_prefix}_drop.log"), "r", encoding="utf-8"
     ) as fil:
         drop_samples = [parse_drop_line(line) for line in fil if line.strip()[0] != "#"]
     return separate_samples_into_bursts(drop_samples, burst_times, bookend=False)
 
 
-def get_queue_metrics(out_dir, queue_name, burst_times):
+def get_queue_metrics_by_burst(exp_dir, queue_name, burst_times):
     queue_prefix = (
         "incast_queue"
         if queue_name == "Incast Queue"
         else ("uplink_queue" if queue_name == "Uplink Queue" else None)
     )
     assert queue_prefix is not None
-    return (
-        get_depths(out_dir, queue_prefix, burst_times),
-        get_marks(out_dir, queue_prefix, burst_times),
-        get_drops(out_dir, queue_prefix, burst_times),
-    )
+    return {
+        "depths": get_depths_by_burst(exp_dir, queue_prefix, burst_times),
+        "marks": get_marks_by_burst(exp_dir, queue_prefix, burst_times),
+        "drops": get_drops_by_burst(exp_dir, queue_prefix, burst_times),
+    }
 
 
 def graph_queue(
-    out_dir,
     queue_name,
     depths_by_burst,
     marks_by_burst,
     drops_by_burst,
     marking_threshold_packets,
     capacity_packets,
+    num_bursts,
+    graph_dir,
     prefix,
 ):
-    num_bursts = len(depths_by_burst)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+    fig, axes = get_axes(num_bursts)
     for burst_idx, (ax, burst) in enumerate(zip(axes, depths_by_burst)):
         # If there are marks, plot them...
         if burst_idx < len(marks_by_burst) and marks_by_burst[burst_idx]:
@@ -300,28 +317,23 @@ def graph_queue(
         ax.set_ylim(bottom=0)
         ax.legend()
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(
-        out_dir,
-        prefix + "_" + "_".join(queue_name.split(" ")).lower(),
-    )
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
-
-    return depths_by_burst, marks_by_burst, drops_by_burst
+    show(fig)
+    save(graph_dir, prefix, suffix="_".join(queue_name.split(" ")).lower())
 
 
 if RUN:
     MARKING_THRESHOLD = CONFIG["smallQueueMinThresholdPackets"]
     QUEUE_CAPACITY = CONFIG["smallQueueSizePackets"]
-    INCAST_Q_DEPTHS_BY_BURST, _, _ = graph_queue(
-        OUT_DIR_GRAPHS,
+    INCAST_Q_METRICS = get_queue_metrics_by_burst(EXP_DIR, "Incast Queue", BURST_TIMES)
+    graph_queue(
         "Incast Queue",
-        *get_queue_metrics(OUT_DIR, "Incast Queue", BURST_TIMES),
+        INCAST_Q_METRICS["depths"],
+        INCAST_Q_METRICS["marks"],
+        INCAST_Q_METRICS["drops"],
         MARKING_THRESHOLD,
         QUEUE_CAPACITY,
+        NUM_BURSTS,
+        GRAPH_DIR,
         EXP,
     )
 
@@ -352,14 +364,20 @@ def calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_s
     return above_sec, total_sec, above_sec / total_sec * 100
 
 
-def calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh, label):
-    num_bursts = len(burst_times)
-    for burst_idx, (depths, (start_sec, end_sec)) in enumerate(
-        zip(depths_by_burst, burst_times)
-    ):
-        above_sec, _, perc = calculate_time_at_or_above_threshold_helper(
-            depths, thresh, start_sec, end_sec
+def calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh):
+    return [
+        calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_sec)
+        for burst_idx, (depths, (start_sec, end_sec)) in enumerate(
+            zip(depths_by_burst, burst_times)
         )
+    ]
+
+
+def print_q_above_thresh(depths_by_burst, burst_times, thresh, label):
+    num_bursts = len(burst_times)
+    for burst_idx, (above_sec, _, perc) in enumerate(
+        calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh)
+    ):
         print(
             f"Burst {burst_idx + 1} of {num_bursts} "
             f"- Time above {label}: {above_sec * 1e3:.2f} ms ({perc:.2f}%)"
@@ -367,73 +385,86 @@ def calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh, l
 
 
 if RUN:
-    calculate_time_at_or_above_threshold(
-        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
+    print_q_above_thresh(
+        INCAST_Q_METRICS["depths"], BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
     )
 
 # %%
 if RUN:
-    calculate_time_at_or_above_threshold(
-        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, 1, "empty"
+    print_q_above_thresh(INCAST_Q_METRICS["depths"], BURST_TIMES, 1, "empty")
+
+# %%
+if RUN:
+    print_q_above_thresh(
+        INCAST_Q_METRICS["depths"], BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
     )
 
 # %%
 if RUN:
-    calculate_time_at_or_above_threshold(
-        INCAST_Q_DEPTHS_BY_BURST, BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
-    )
-
-# %%
-if RUN:
-    _, _, _ = graph_queue(
-        OUT_DIR,
+    UPLINK_Q_METRICS = get_queue_metrics_by_burst(EXP_DIR, "Uplink Queue", BURST_TIMES)
+    graph_queue(
         "Uplink Queue",
-        *get_queue_metrics(OUT_DIR, "Uplink Queue", BURST_TIMES),
+        UPLINK_Q_METRICS["depths"],
+        UPLINK_Q_METRICS["marks"],
+        UPLINK_Q_METRICS["drops"],
         MARKING_THRESHOLD,
         QUEUE_CAPACITY,
-        EXP
+        NUM_BURSTS,
+        GRAPH_DIR,
+        EXP,
     )
 
 
 # %%
 def parse_flow_times(flow_times_json):
-    return [
+    burst_to_sender_to_flow_times = [
         {
             times["id"]: (times["start"], times["firstPacket"], times["end"], ip)
             for ip, times in flows.items()
         }
         for burst, flows in sorted(flow_times_json.items(), key=lambda p: int(p[0]))
     ]
+    sender_to_flow_times_by_burst = {}
+    for sender in burst_to_sender_to_flow_times[0].keys():
+        sender_flow_times_by_burst = []
+        for burst_idx in range(len(burst_to_sender_to_flow_times)):
+            sender_flow_times_by_burst.append(
+                burst_to_sender_to_flow_times[burst_idx][sender]
+            )
+        sender_to_flow_times_by_burst[sender] = sender_flow_times_by_burst
+    return sender_to_flow_times_by_burst
 
 
-def get_flow_times(out_dir):
+def get_sender_to_flow_times_by_burst(exp_dir):
     with open(
-        path.join(out_dir, "logs", "flow_times.json"), "r", encoding="utf-8"
+        path.join(exp_dir, "logs", "flow_times.json"), "r", encoding="utf-8"
     ) as fil:
         return parse_flow_times(json.load(fil))
 
 
-def graph_active_connections(out_dir, burst_times, flow_times, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
-    for burst_idx, ax in enumerate(axes):
-        times = flow_times[burst_idx].values()
+def get_active_conns_by_burst(sender_to_flow_times_by_burst, num_bursts):
+    active_conns_by_burst = []
+    for burst_idx in range(num_bursts):
+        times = [
+            flow_times_by_burst[burst_idx]
+            for flow_times_by_burst in sender_to_flow_times_by_burst.values()
+        ]
         starts, _, ends, _ = zip(*times)
         serialized = [(start, 1) for start in starts] + [(end, -1) for end in ends]
         serialized = sorted(serialized, key=lambda p: p[0])
         active = [serialized[0]]
         for time, action in serialized[1:]:
             active.append((time, active[-1][1] + action))
-        xs, ys = zip(*active)
+        active_conns_by_burst.append(active)
+    return active_conns_by_burst
 
+
+def graph_active_connections(
+    sender_to_flow_times_by_burst, active_conns_by_burst, num_bursts, graph_dir, prefix
+):
+    fig, axes = get_axes(num_bursts)
+    for burst_idx, ax in enumerate(axes):
+        xs, ys = zip(*active_conns_by_burst[burst_idx])
         ax.plot(xs, ys, drawstyle="steps-post", alpha=0.8)
 
         ax.set_title(
@@ -443,31 +474,30 @@ def graph_active_connections(out_dir, burst_times, flow_times, prefix):
         ax.set_ylabel("active connections")
         ax.set_ylim(bottom=0)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, "graphs", prefix + "_" + "active_connections")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="active_connections")
 
 
 if RUN:
-    FLOW_TIMES = get_flow_times(OUT_DIR)
-    graph_active_connections(OUT_DIR, BURST_TIMES, FLOW_TIMES, EXP)
+    SENDER_TO_FLOW_TIMES_BY_BURST = get_sender_to_flow_times_by_burst(EXP_DIR)
+    ACTIVE_CONNS_BY_BURST = get_active_conns_by_burst(
+        SENDER_TO_FLOW_TIMES_BY_BURST, NUM_BURSTS
+    )
+    graph_active_connections(
+        SENDER_TO_FLOW_TIMES_BY_BURST, ACTIVE_CONNS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP
+    )
 
 
 # %%
-def graph_cdf_of_flow_duration(flow_times, burst_times, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_cdf_of_flow_duration(
+    sender_to_flow_times_by_burst, num_bursts, graph_dir, prefix
+):
+    fig, axes = get_axes(num_bursts, width=5)
     for burst_idx, ax in enumerate(axes):
-        times = flow_times[burst_idx].values()
+        times = [
+            flow_times_by_burst[burst_idx]
+            for flow_times_by_burst in sender_to_flow_times_by_burst.values()
+        ]
         durations = [end - start for start, _, end, _ in times]
 
         count, bins_count = np.histogram(durations, bins=len(durations))
@@ -479,16 +509,14 @@ def graph_cdf_of_flow_duration(flow_times, burst_times, out_dir, prefix):
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0, top=1.01)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "flow_duration_cdf")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="flow_duration_cdf")
 
 
 if RUN:
-    graph_cdf_of_flow_duration(FLOW_TIMES, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+    graph_cdf_of_flow_duration(
+        SENDER_TO_FLOW_TIMES_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP
+    )
 
 
 # %%
@@ -510,36 +538,27 @@ def parse_sender(flp):
     return int(path.basename(flp).split("_")[0][6:])
 
 
-def get_sender_to_cwnds_by_burst(out_dir, burst_times, flow_times):
+def get_sender_to_cwnds_by_burst(exp_dir, burst_times, sender_to_flow_times_by_burst):
     return {
         parse_sender(flp): separate_samples_into_bursts(
             # Read all CWND samples for this sender
             parse_cwnds(flp),
             burst_times,
             # Look up the start and end time for this sender
-            [burst_flow_times[parse_sender(flp)] for burst_flow_times in flow_times],
+            sender_to_flow_times_by_burst[parse_sender(flp)],
             filter_on_flow_times=True,
             bookend=True,
         )
         for flp in [
-            path.join(out_dir, "logs", fln)
-            for fln in os.listdir(path.join(out_dir, "logs"))
+            path.join(exp_dir, "logs", fln)
+            for fln in os.listdir(path.join(exp_dir, "logs"))
             if fln.startswith("sender") and fln.endswith("_cwnd.log")
         ]
     }
 
 
-def graph_sender_cwnd(out_dir, sender_to_cwnds_by_burst, burst_times, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_sender_cwnd(sender_to_cwnds_by_burst, num_bursts, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts)
     for burst_idx, ax in enumerate(axes):
         ax.set_title(
             f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
@@ -555,21 +574,15 @@ def graph_sender_cwnd(out_dir, sender_to_cwnds_by_burst, burst_times, prefix):
 
         ax.set_ylim(bottom=0)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, "graphs", prefix + "_" + "cwnd")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
-
-    return sender_to_cwnds_by_burst
+    show(fig)
+    save(graph_dir, prefix, suffix="cwnd")
 
 
 if RUN:
     SENDER_TO_CWNDS_BY_BURST = get_sender_to_cwnds_by_burst(
-        OUT_DIR, BURST_TIMES, FLOW_TIMES
+        EXP_DIR, BURST_TIMES, SENDER_TO_FLOW_TIMES_BY_BURST
     )
-    graph_sender_cwnd(OUT_DIR, SENDER_TO_CWNDS_BY_BURST, BURST_TIMES, EXP)
+    graph_sender_cwnd(SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -678,7 +691,7 @@ def interpolate_flows_for_burst(
         sender_to_cwnds_by_burst_interp[sender].append(list(zip(new_xs, new_ys)))
 
 
-def calculate_aggregate_metrics(valid, interp_delta, percentiles):
+def get_cwnd_metrics_helper(valid, interp_delta, percentiles):
     # Determine the overall x-axis range for this burst, across all valid senders.
     start_x = min(samples[0][0] for samples in valid)
     end_x = max(samples[-1][0] for samples in valid)
@@ -705,12 +718,10 @@ def calculate_aggregate_metrics(valid, interp_delta, percentiles):
     return xs, avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, sum_ys
 
 
-def graph_aggregate_cwnd_per_burst_helper(
-    ax,
+def get_cwnd_metrics(
     sender_to_cwnds_by_burst,
     sender_to_cwnds_by_burst_interp,
     burst_idx,
-    burst_times,
     interp_delta,
     percentiles,
 ):
@@ -727,102 +738,91 @@ def graph_aggregate_cwnd_per_burst_helper(
         for bursts in sender_to_cwnds_by_burst_interp.values()
         if bursts[burst_idx]
     ]
-    print(
-        f"Burst {burst_idx} has "
-        f"{len(valid)}/{len(sender_to_cwnds_by_burst_interp)} "
-        "senders with at least one CWND sample."
-    )
-
-    (
-        xs,
-        avg_ys,
-        stdev_ys,
-        min_ys,
-        max_ys,
-        percentiles_ys,
-        _,
-    ) = calculate_aggregate_metrics(valid, interp_delta, percentiles)
-
-    # Left graph
-    ax[0].fill_between(xs, min_ys, max_ys, alpha=0.25, label="min/max")
-    ax[0].fill_between(
-        xs, avg_ys - stdev_ys, avg_ys + stdev_ys, alpha=0.5, label="avg +/- stdev"
-    )
-    ax[0].plot(xs, avg_ys, label="avg", alpha=0.8)
-    ax[0].set_title(
-        f"CWND of active connections: Burst {burst_idx + 1} of {len(burst_times)}"
-    )
-    ax[0].set_xlabel("time (seconds)")
-    ax[0].set_ylabel("CWND (bytes)")
-    ax[0].set_ylim(bottom=0)
-    ax[0].legend()
-
-    # Right graph
-    ax[1].plot(xs, avg_ys, label="avg", alpha=0.8)
-    for idx in range(1, percentiles_ys.shape[0]):
-        ax[1].fill_between(
-            xs,
-            percentiles_ys[idx - 1],
-            percentiles_ys[idx],
-            alpha=0.5,
-            label=f"p{percentiles[idx]}",
+    if len(valid) != len(sender_to_cwnds_by_burst_interp):
+        print(
+            f"Warning: Burst {burst_idx} has "
+            f"{len(valid)}/{len(sender_to_cwnds_by_burst_interp)} "
+            "senders with at least one CWND sample."
         )
-    ax[1].set_title(
-        f"CWND of active connections: Burst {burst_idx + 1} of {len(burst_times)}"
-    )
-    ax[1].set_xlabel("time (seconds)")
-    ax[1].set_ylabel("CWND (bytes)")
-    ax[1].set_ylim(bottom=0)
-    ax[1].legend()
+
+    return get_cwnd_metrics_helper(valid, interp_delta, percentiles)
 
 
-def graph_aggregate_cwnd_per_burst(
-    sender_to_cwnds_by_burst, burst_times, interp_delta, percentiles, out_dir, prefix
+def get_cwnd_metrics_by_burst(
+    sender_to_cwnds_by_burst, num_bursts, interp_delta, percentiles
 ):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(13, 3 * num_bursts), nrows=num_bursts, ncols=2
-        )
-    if num_bursts == 1:
-        axes = [axes]
-
-    # Calculate aggregate metrics, graph them, and store interpolated flows in
-    # this dict.
     sender_to_cwnds_by_burst_interp = collections.defaultdict(list)
-    for burst_idx, ax in enumerate(axes):
-        graph_aggregate_cwnd_per_burst_helper(
-            ax,
+    cwnd_metrics_by_burst = [
+        get_cwnd_metrics(
             sender_to_cwnds_by_burst,
             sender_to_cwnds_by_burst_interp,
             burst_idx,
-            burst_times,
             interp_delta,
             percentiles,
         )
-
+        for burst_idx in range(num_bursts)
+    ]
     for bursts_interp in sender_to_cwnds_by_burst_interp.values():
         assert len(bursts_interp) == num_bursts
+    return sender_to_cwnds_by_burst_interp, cwnd_metrics_by_burst
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
 
-    out_flp = path.join(out_dir, prefix + "_" + "cwnd_analysis")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+def graph_cwnd_metrics(
+    cwnd_metrics_by_burst, num_bursts, percentiles, graph_dir, prefix
+):
+    fig, axes = get_axes(num_bursts, width=13, cols=2)
+    for burst_idx, ax in enumerate(axes):
+        xs, avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, _ = cwnd_metrics_by_burst[
+            burst_idx
+        ]
 
-    return sender_to_cwnds_by_burst_interp
+        # Left graph
+        ax[0].fill_between(xs, min_ys, max_ys, alpha=0.25, label="min/max")
+        ax[0].fill_between(
+            xs, avg_ys - stdev_ys, avg_ys + stdev_ys, alpha=0.5, label="avg +/- stdev"
+        )
+        ax[0].plot(xs, avg_ys, label="avg", alpha=0.8)
+        ax[0].set_title(
+            f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax[0].set_xlabel("time (seconds)")
+        ax[0].set_ylabel("CWND (bytes)")
+        ax[0].set_ylim(bottom=0)
+        ax[0].legend()
+
+        # Right graph
+        ax[1].plot(xs, avg_ys, label="avg", alpha=0.8)
+        for idx in range(1, percentiles_ys.shape[0]):
+            ax[1].fill_between(
+                xs,
+                percentiles_ys[idx - 1],
+                percentiles_ys[idx],
+                alpha=0.5,
+                label=f"p{percentiles[idx]}",
+            )
+        ax[1].set_title(
+            f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax[1].set_xlabel("time (seconds)")
+        ax[1].set_ylabel("CWND (bytes)")
+        ax[1].set_ylim(bottom=0)
+        ax[1].legend()
+
+    show(fig)
+    save(graph_dir, prefix, suffix="cwnd_analysis")
 
 
 if RUN:
     INTERP_DELTA = 1e5
     PERCENTILES = [0, 25, 50, 75, 95, 100]
-    SENDER_TO_CWNDS_BY_BURST_INTERP = graph_aggregate_cwnd_per_burst(
-        SENDER_TO_CWNDS_BY_BURST,
-        BURST_TIMES,
-        INTERP_DELTA,
+    SENDER_TO_CWNDS_BY_BURST_INTERP, CWND_METRICS_BY_BURST = get_cwnd_metrics_by_burst(
+        SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, INTERP_DELTA, PERCENTILES
+    )
+    graph_cwnd_metrics(
+        CWND_METRICS_BY_BURST,
+        NUM_BURSTS,
         PERCENTILES,
-        OUT_DIR_GRAPHS,
+        GRAPH_DIR,
         EXP,
     )
 
@@ -832,6 +832,7 @@ def calculate_average_queue_depth(
     depths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
 ):
     num_bursts = len(depths_by_burst)
+    avg_q_depth_by_burst = []
     for burst_idx, depths in enumerate(depths_by_burst):
         old_xs, old_ys = zip(*depths)
         start_x = old_xs[0]
@@ -849,6 +850,22 @@ def calculate_average_queue_depth(
         avg_q_packets = new_ys.mean()
         avg_q_bytes = avg_q_packets * bytes_per_packet
         avg_q_us = avg_q_bytes / (bandwidth_bps / 8) * 1e6
+        avg_q_depth_by_burst.append((avg_q_packets, avg_q_bytes, avg_q_us))
+    return avg_q_depth_by_burst
+
+
+def print_avg_q_depth(
+    depths_by_burst, num_bursts, interp_delta, bandwidth_bps, bytes_per_packet
+):
+    for burst_idx, (
+        avg_q_packets,
+        avg_q_bytes,
+        avg_q_us,
+    ) in enumerate(
+        calculate_average_queue_depth(
+            depths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
+        )
+    ):
         print(
             f"Burst {burst_idx + 1} of {num_bursts} - "
             f"Average queue depth: {avg_q_packets:.2f} packets, "
@@ -859,25 +876,26 @@ def calculate_average_queue_depth(
 if RUN:
     BYTES_PER_PACKET = 1500
     BANDWIDTH_BITSPS = CONFIG["smallLinkBandwidthMbps"] * 1e6
-    calculate_average_queue_depth(
-        INCAST_Q_DEPTHS_BY_BURST, INTERP_DELTA, BANDWIDTH_BITSPS, BYTES_PER_PACKET
+    print_avg_q_depth(
+        INCAST_Q_METRICS["depths"],
+        NUM_BURSTS,
+        INTERP_DELTA,
+        BANDWIDTH_BITSPS,
+        BYTES_PER_PACKET,
     )
 
 
 # %%
 def graph_estimated_queue_ingress_rate(
-    depths_by_burst, bandwidth_bps, bytes_per_packet, interp_delta, out_dir, prefix
+    depths_by_burst,
+    num_bursts,
+    bandwidth_bps,
+    bytes_per_packet,
+    interp_delta,
+    graph_dir,
+    prefix,
 ):
-    num_bursts = len(depths_by_burst)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+    fig, axes = get_axes(num_bursts)
     for burst_idx, (ax, depths) in enumerate(zip(axes, depths_by_burst)):
         old_xs, old_ys = zip(*depths)
         start_x = old_xs[0]
@@ -901,8 +919,9 @@ def graph_estimated_queue_ingress_rate(
         ax.set_ylabel("ingress rate (Gbps)")
 
         dydxs = np.gradient(new_ys, new_xs)
-
-        # print(bandwidth_bps)
+        # If queue is not empty, then it is by definition draining at the
+        # bandwidth. So if y is not 0, then add back the bandwidth to the
+        # gradient to calculate the true ingress rate instead of the net rate.
         dydxs = np.array(
             [
                 dydx if y == 0 else (dydx + bandwidth_bps)
@@ -914,33 +933,25 @@ def graph_estimated_queue_ingress_rate(
         ax.plot(new_xs, dydxs, alpha=0.8)
         ax.set_ylim(bottom=min(0, min(dydxs) * 1.1))
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "queue_ingress_rate")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="queue_ingress_rate")
 
 
 if RUN:
     graph_estimated_queue_ingress_rate(
-        INCAST_Q_DEPTHS_BY_BURST,
+        INCAST_Q_METRICS["depths"],
+        NUM_BURSTS,
         BANDWIDTH_BITSPS,
         BYTES_PER_PACKET,
-        interp_delta=1e5,
-        out_dir=OUT_DIR_GRAPHS,
-        prefix=EXP,
+        INTERP_DELTA,
+        GRAPH_DIR,
+        EXP,
     )
 
 
 # %%
-def graph_aggregate_cwnd_across_bursts(
-    sender_to_cwnds_by_burst_interp,
-    num_bursts,
-    interp_delta,
-    percentiles,
-    out_dir,
-    prefix,
+def get_cwnd_metrics_across_bursts(
+    sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
 ):
     # We always ignore the first burst, since it is different than the others
     # due to slow start.
@@ -970,18 +981,21 @@ def graph_aggregate_cwnd_across_bursts(
                     ]
                 )
 
-    (
-        xs,
-        avg_ys,
-        stdev_ys,
-        min_ys,
-        max_ys,
-        percentiles_ys,
-        _,
-    ) = calculate_aggregate_metrics(flattened_flows, interp_delta, percentiles)
+    return get_cwnd_metrics_helper(flattened_flows, interp_delta, percentiles)
 
-    with plt.ioff():
-        fig, axes = plt.subplots(figsize=(13, 3), nrows=1, ncols=2)
+
+def graph_aggregate_cwnd_across_bursts(
+    cwnd_metrics_across_bursts,
+    num_bursts,
+    interp_delta,
+    percentiles,
+    graph_dir,
+    prefix,
+):
+    fig, axes = get_axes(rows=1, width=13, cols=2)
+    axes = axes[0]
+
+    xs, avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, _ = cwnd_metrics_across_bursts
 
     # Left graph
     axes[0].fill_between(xs, min_ys, max_ys, alpha=0.25, label="min/max")
@@ -1011,51 +1025,36 @@ def graph_aggregate_cwnd_across_bursts(
     axes[1].set_ylim(bottom=0)
     axes[1].legend()
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "combined_cwnd_analysis")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="combined_cwnd_analysis")
 
 
 if RUN:
+    CWND_METRICS_ACROSS_BURSTS = get_cwnd_metrics_across_bursts(
+        SENDER_TO_CWNDS_BY_BURST_INTERP, NUM_BURSTS, INTERP_DELTA, PERCENTILES
+    )
     graph_aggregate_cwnd_across_bursts(
-        SENDER_TO_CWNDS_BY_BURST_INTERP,
-        len(BURST_TIMES),
+        CWND_METRICS_ACROSS_BURSTS,
+        NUM_BURSTS,
         INTERP_DELTA,
         PERCENTILES,
-        OUT_DIR_GRAPHS,
+        GRAPH_DIR,
         EXP,
     )
 
 
 # %%
 def graph_total_cwnd(
-    sender_to_cwnds_by_burst_interp,
-    burst_times,
+    cwnd_metrics_by_burst,
+    num_bursts,
     bdp_bytes,
     interp_delta,
-    out_dir,
+    graph_dir,
     prefix,
 ):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(13, 3 * num_bursts), nrows=num_bursts, ncols=2
-        )
-    if num_bursts == 1:
-        axes = [axes]
-
+    fig, axes = get_axes(num_bursts, width=13, cols=2)
     for burst_idx, ax in enumerate(axes):
-        valid = [
-            bursts[burst_idx]
-            for bursts in sender_to_cwnds_by_burst_interp.values()
-            if bursts[burst_idx]
-        ]
-        xs, _, _, _, _, _, sum_ys = calculate_aggregate_metrics(
-            valid, interp_delta, percentiles=[]
-        )
+        xs, _, _, _, _, _, sum_ys = cwnd_metrics_by_burst[burst_idx]
 
         ax[0].plot(
             xs, sum_ys / 1e3, label="Total CWND of active connections", alpha=0.8
@@ -1091,12 +1090,8 @@ def graph_total_cwnd(
         ax[1].set_ylabel("multiples of the BDP")
         ax[1].set_ylim(bottom=0)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "total_cwnd")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="total_cwnd")
 
 
 if RUN:
@@ -1104,25 +1099,18 @@ if RUN:
         CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8 * 6 * CONFIG["delayPerLinkUs"] / 1e6
     )
     graph_total_cwnd(
-        SENDER_TO_CWNDS_BY_BURST_INTERP,
-        BURST_TIMES,
+        CWND_METRICS_BY_BURST,
+        NUM_BURSTS,
         BDP_BYTES,
         INTERP_DELTA,
-        OUT_DIR_GRAPHS,
+        GRAPH_DIR,
         EXP,
     )
 
 
 # %%
-def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, num_bursts, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts, width=5)
     for burst_idx, ax in enumerate(axes):
         cwnd_down = []
         cwnd_up = []
@@ -1164,16 +1152,12 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, burst_times, out_dir, prefix
         ax.set_ylim(bottom=0, top=1.01)
         ax.legend()
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "cwnd_change_cdf")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="cwnd_change_cdf")
 
 
 if RUN:
-    graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+    graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -1193,37 +1177,28 @@ def parse_congest(flp):
         return [parse_congest_line(line) for line in fil if line.strip()[0] != "#"]
 
 
-def get_sender_to_congest_by_burst(out_dir, burst_times, flow_times):
+def get_sender_to_congest_by_burst(exp_dir, burst_times, sender_to_flow_times_by_burst):
     return {
         parse_sender(flp): separate_samples_into_bursts(
             # Read all congestion estimate samples for this sender
             parse_congest(flp),
             burst_times,
             # Look up the start and end time for this sender
-            [burst_flow_times[parse_sender(flp)] for burst_flow_times in flow_times],
+            sender_to_flow_times_by_burst[parse_sender(flp)],
             filter_on_flow_times=True,
             bookend=True,
         )
         # Look up all congestion estimate log files.
         for flp in [
-            path.join(out_dir, "logs", fln)
-            for fln in os.listdir(path.join(out_dir, "logs"))
+            path.join(exp_dir, "logs", fln)
+            for fln in os.listdir(path.join(exp_dir, "logs"))
             if fln.startswith("sender") and fln.endswith("_congest.log")
         ]
     }
 
 
-def graph_sender_dctcp_alpha(sender_to_congest_by_burst, burst_times, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_sender_dctcp_alpha(sender_to_congest_by_burst, num_bursts, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts)
     for burst_idx, ax in enumerate(axes):
         ax.set_title(
             f"Alpha of active connections: Burst {burst_idx + 1} of {num_bursts}"
@@ -1246,21 +1221,15 @@ def graph_sender_dctcp_alpha(sender_to_congest_by_burst, burst_times, out_dir, p
 
         ax.set_ylim(bottom=0)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "alpha")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="dctcp_alpha")
 
 
 if RUN:
     SENDER_TO_CONGEST_BY_BURST = get_sender_to_congest_by_burst(
-        OUT_DIR, BURST_TIMES, FLOW_TIMES
+        EXP_DIR, BURST_TIMES, SENDER_TO_FLOW_TIMES_BY_BURST
     )
-    graph_sender_dctcp_alpha(
-        SENDER_TO_CONGEST_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP
-    )
+    graph_sender_dctcp_alpha(SENDER_TO_CONGEST_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -1278,37 +1247,28 @@ def parse_rtts(flp):
         return [parse_rtt_line(line) for line in fil if line.strip()[0] != "#"]
 
 
-def get_sender_to_rtts_by_burst(out_dir, burst_times, flow_times):
+def get_sender_to_rtts_by_burst(exp_dir, burst_times, sender_to_flow_times_by_burst):
     return {
         parse_sender(flp): separate_samples_into_bursts(
             # Read all congestion estimate samples for this sender
             parse_rtts(flp),
             burst_times,
             # Look up the start and end time for this sender
-            [burst_flow_times[parse_sender(flp)] for burst_flow_times in flow_times],
+            sender_to_flow_times_by_burst[parse_sender(flp)],
             filter_on_flow_times=True,
             bookend=True,
         )
         # Look up all congestion estimate log files.
         for flp in [
-            path.join(out_dir, "logs", fln)
-            for fln in os.listdir(path.join(out_dir, "logs"))
+            path.join(exp_dir, "logs", fln)
+            for fln in os.listdir(path.join(exp_dir, "logs"))
             if fln.startswith("sender") and fln.endswith("_rtt.log")
         ]
     }
 
 
-def graph_sender_rtt(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(
-            figsize=(10, 3 * num_bursts), nrows=num_bursts, ncols=1
-        )
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_sender_rtt(sender_to_rtts_by_burst, num_bursts, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts)
     for burst_idx, ax in enumerate(axes):
         ax.set_title(
             "Sender-measured RTT of active connections: "
@@ -1325,31 +1285,20 @@ def graph_sender_rtt(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
 
         ax.set_ylim(bottom=0)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "rtt")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="rtt")
 
 
 if RUN:
     SENDER_TO_RTTS_BY_BURST = get_sender_to_rtts_by_burst(
-        OUT_DIR, BURST_TIMES, FLOW_TIMES
+        EXP_DIR, BURST_TIMES, SENDER_TO_FLOW_TIMES_BY_BURST
     )
-    graph_sender_rtt(SENDER_TO_RTTS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+    graph_sender_rtt(SENDER_TO_RTTS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
-def graph_rtt_cdf(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_rtt_cdf(sender_to_rtts_by_burst, num_bursts, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts, width=5)
     for burst_idx, ax in enumerate(axes):
         rtt_us = [
             x[1]
@@ -1372,33 +1321,22 @@ def graph_rtt_cdf(sender_to_rtts_by_burst, burst_times, out_dir, prefix):
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0, top=1.01)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "rtt_cdf")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="rtt_cdf")
 
 
 if RUN:
-    graph_rtt_cdf(SENDER_TO_RTTS_BY_BURST, BURST_TIMES, OUT_DIR_GRAPHS, EXP)
+    graph_rtt_cdf(SENDER_TO_RTTS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
-def graph_ack_size_cdf(sender_to_congest_by_burst, burst_times, mss, out_dir, prefix):
-    num_bursts = len(burst_times)
-    with plt.ioff():
-        fig, axes = plt.subplots(figsize=(5, 3 * num_bursts), nrows=num_bursts, ncols=1)
-    if num_bursts == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-
+def graph_ack_size_cdf(sender_to_congest_by_burst, num_bursts, mss, graph_dir, prefix):
+    fig, axes = get_axes(num_bursts, width=5)
     for burst_idx, ax in enumerate(axes):
         ack_bytes = [
-            x[2] / mss
+            b[2] / mss
             for sender_congests in sender_to_congest_by_burst.values()
-            for x in sender_congests[burst_idx]
+            for b in sender_congests[burst_idx]
         ]
 
         # Plot CDF of ACK size across all senders
@@ -1416,46 +1354,87 @@ def graph_ack_size_cdf(sender_to_congest_by_burst, burst_times, mss, out_dir, pr
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0, top=1.01)
 
-    plt.tight_layout()
-    maybe_show_fig(fig)
-
-    out_flp = path.join(out_dir, prefix + "_" + "acks_cdf")
-    plt.savefig(out_flp + ".pdf")
-    plt.savefig(out_flp + ".png", dpi=300)
+    show(fig)
+    save(graph_dir, prefix, suffix="acks_cdf")
 
 
 if RUN:
     MSS = 1448
-    graph_ack_size_cdf(
-        SENDER_TO_CONGEST_BY_BURST, BURST_TIMES, MSS, OUT_DIR_GRAPHS, EXP
-    )
+    graph_ack_size_cdf(SENDER_TO_CONGEST_BY_BURST, NUM_BURSTS, MSS, GRAPH_DIR, EXP)
 
 
 # %%
-def get_all_metrics_for_exp(out_dir):
-    burst_times = get_burst_times(out_dir)
-    flow_times = get_flow_times(out_dir)
-    config = get_config_json(out_dir)
+def get_all_metrics_for_exp(
+    exp_dir,
+    interp_delta=1e5,
+    percentiles=[0, 25, 50, 75, 95, 100],
+    bytes_per_packet=15000,
+):
+    config = get_config_json(exp_dir)
+    num_bursts = config["numBursts"]
+    burst_times = get_burst_times(exp_dir)
+    sender_to_flow_times_by_burst = get_sender_to_flow_times_by_burst(exp_dir)
+    sender_to_cwnds_by_burst = get_sender_to_cwnds_by_burst(
+        exp_dir, burst_times, sender_to_flow_times_by_burst
+    )
+    sender_to_cwnds_by_burst_interp, cwnd_metrics_by_burst = get_cwnd_metrics_by_burst(
+        sender_to_cwnds_by_burst, num_bursts, interp_delta, percentiles
+    )
+    incast_q_metrics = get_queue_metrics_by_burst(exp_dir, "Incast Queue", burst_times)
+    uplink_q_metrics = get_queue_metrics_by_burst(exp_dir, "Uplink Queue", burst_times)
     return {
-        "out_dir": out_dir,
+        "exp_dir": exp_dir,
         "config": config,
         "burst_times": burst_times,
-        "flow_times": flow_times,
+        "sender_to_flow_times_by_burst": sender_to_flow_times_by_burst,
+        "active_conns_by_burst": get_active_conns_by_burst(
+            sender_to_flow_times_by_burst, num_bursts
+        ),
         "ideal_sec": (
             config["bytesPerSender"]
             * config["numSenders"]
             / (config["smallLinkBandwidthMbps"] * 1e6 / 8)
             + (6 * config["delayPerLinkUs"] / 1e6)
         ),
-        "incast_queue": get_queue_metrics(out_dir, "Incast Queue", burst_times),
-        "uplink_queue": get_queue_metrics(out_dir, "Uplink Queue", burst_times),
-        "sender_to_cwnds_by_burst": get_sender_to_cwnds_by_burst(
-            out_dir, burst_times, flow_times
+        "incast_queue": incast_q_metrics,
+        "uplink_queue": uplink_q_metrics,
+        "sender_to_cwnds_by_burst": sender_to_cwnds_by_burst,
+        "sender_to_cwnds_by_burst_interp": sender_to_cwnds_by_burst_interp,
+        "cwnd_metrics_by_burst": cwnd_metrics_by_burst,
+        "cwnd_metrics_across_bursts": get_cwnd_metrics_across_bursts(
+            sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
         ),
         "sender_to_congest_by_burst": get_sender_to_congest_by_burst(
-            out_dir, burst_times, flow_times
+            exp_dir, burst_times, sender_to_flow_times_by_burst
         ),
         "sender_to_rtts_by_burst": get_sender_to_rtts_by_burst(
-            out_dir, burst_times, flow_times
+            exp_dir, burst_times, sender_to_flow_times_by_burst
+        ),
+        "incast_q_above_empty": calculate_time_at_or_above_threshold(
+            incast_q_metrics["depths"],
+            burst_times,
+            1,
+        ),
+        "incast_q_above_mark": calculate_time_at_or_above_threshold(
+            incast_q_metrics["depths"],
+            burst_times,
+            config["smallQueueMinThresholdPackets"],
+        ),
+        "incast_q_above_90": calculate_time_at_or_above_threshold(
+            incast_q_metrics["depths"],
+            burst_times,
+            config["smallQueueSizePackets"] * 0.9,
+        ),
+        "incast_q_avg_depth_by_burst": calculate_average_queue_depth(
+            incast_q_metrics["depths"],
+            interp_delta,
+            config["smallLinkBandwidthMbps"] * 1e6,
+            bytes_per_packet,
+        ),
+        "uplink_q_avg_depth_by_burst": calculate_average_queue_depth(
+            uplink_q_metrics["depths"],
+            interp_delta,
+            config["largeLinkBandwidthMbps"] * 1e6,
+            bytes_per_packet,
         ),
     }
