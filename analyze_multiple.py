@@ -22,4 +22,8 @@ exps = {
 }
 
 # %%
-print(test)
+exp_to_data = {
+    exp_name: analysis.get_all_metrics_for_exp(exp_dir)
+    for exp_name, exp_dir in exps.items()
+}
+len(exp_to_data)
