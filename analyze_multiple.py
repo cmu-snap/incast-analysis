@@ -132,3 +132,7 @@ graph_delack_sweep_cdf(delack_sweep_exp_to_data, delack_sweep_dir)
 # Interesting things to plot:
 # - RTT CDF: Randomly sample 1000 RTTs from each configuration
 # - Average non-empty queue depth: Average depth of the incast queue whenever it's not 0 or 1.
+
+# %%
+# Randomly sample 1000 points
+# Plot CDF

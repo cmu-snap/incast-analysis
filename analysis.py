@@ -459,9 +459,7 @@ def get_active_conns_by_burst(sender_to_flow_times_by_burst, num_bursts):
     return active_conns_by_burst
 
 
-def graph_active_connections(
-    sender_to_flow_times_by_burst, active_conns_by_burst, num_bursts, graph_dir, prefix
-):
+def graph_active_connections(active_conns_by_burst, num_bursts, graph_dir, prefix):
     fig, axes = get_axes(num_bursts)
     for burst_idx, ax in enumerate(axes):
         xs, ys = zip(*active_conns_by_burst[burst_idx])
@@ -483,9 +481,7 @@ if RUN:
     ACTIVE_CONNS_BY_BURST = get_active_conns_by_burst(
         SENDER_TO_FLOW_TIMES_BY_BURST, NUM_BURSTS
     )
-    graph_active_connections(
-        SENDER_TO_FLOW_TIMES_BY_BURST, ACTIVE_CONNS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP
-    )
+    graph_active_connections(ACTIVE_CONNS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -656,10 +652,10 @@ def step_interp(old_xs, old_ys, new_xs):
 
 
 def interpolate_flows_for_burst(
-    sender_to_cwnds_by_burst, sender_to_cwnds_by_burst_interp, burst_idx, interp_delta
+    sender_to_x_by_burst, sender_to_x_by_burst_interp, burst_idx, interp_delta
 ):
     # Interpolate each flow at uniform intervals.
-    for sender, bursts in sender_to_cwnds_by_burst.items():
+    for sender, bursts in sender_to_x_by_burst.items():
         if bursts[burst_idx]:
             start_x = bursts[burst_idx][0][0]
             end_x = bursts[burst_idx][-1][0]
@@ -673,25 +669,54 @@ def interpolate_flows_for_burst(
                 ]
             )
             assert len(bursts[burst_idx]) > 0
-            # print("interp_delta", interp_delta)
-            # print("start_x", start_x)
-            # print("end_x", end_x)
-            # print(
-            #     "math.ceil(start_x * interp_delta)", math.ceil(start_x * interp_delta)
-            # )
-            # print(
-            #     "math.floor(end_x * interp_delta) + 1",
-            #     math.floor(end_x * interp_delta) + 1,
-            # )
             assert len(new_xs) > 0
             new_ys = step_interp(*zip(*bursts[burst_idx]), new_xs)
         else:
             new_xs = np.array([])
             new_ys = np.array([])
-        sender_to_cwnds_by_burst_interp[sender].append(list(zip(new_xs, new_ys)))
+        sender_to_x_by_burst_interp[sender].append(list(zip(new_xs, new_ys)))
 
 
-def get_cwnd_metrics_helper(valid, interp_delta, percentiles):
+def get_sender_to_x_by_burst_interp(sender_to_x_by_burst, num_bursts, interp_delta):
+    sender_to_x_by_burst_interp = collections.defaultdict(list)
+    for burst_idx in range(num_bursts):
+        interpolate_flows_for_burst(
+            sender_to_x_by_burst,
+            sender_to_x_by_burst_interp,
+            burst_idx,
+            interp_delta,
+        )
+    for bursts_interp in sender_to_x_by_burst_interp.values():
+        assert len(bursts_interp) == num_bursts
+    return sender_to_x_by_burst_interp
+
+
+def get_metrics(
+    sender_to_x_by_burst_interp,
+    burst_idx,
+    interp_delta,
+    percentiles,
+):
+    # Throw away senders that do not have any samples for this burst.
+    valid = [
+        bursts[burst_idx]
+        for bursts in sender_to_x_by_burst_interp.values()
+        if bursts[burst_idx]
+    ]
+    if len(valid) != len(sender_to_x_by_burst_interp):
+        print(
+            f"Warning: Burst {burst_idx} has "
+            f"{len(valid)}/{len(sender_to_x_by_burst_interp)} "
+            "senders with at least one sample."
+        )
+    return get_metrics_helper(valid, interp_delta, percentiles)
+
+
+def get_metrics_helper(
+    valid,
+    interp_delta,
+    percentiles,
+):
     # Determine the overall x-axis range for this burst, across all valid senders.
     start_x = min(samples[0][0] for samples in valid)
     end_x = max(samples[-1][0] for samples in valid)
@@ -718,53 +743,18 @@ def get_cwnd_metrics_helper(valid, interp_delta, percentiles):
     return xs, avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, sum_ys
 
 
-def get_cwnd_metrics(
-    sender_to_cwnds_by_burst,
-    sender_to_cwnds_by_burst_interp,
-    burst_idx,
-    interp_delta,
-    percentiles,
+def get_metrics_by_burst(
+    sender_to_x_by_burst_interp, num_bursts, interp_delta, percentiles
 ):
-    interpolate_flows_for_burst(
-        sender_to_cwnds_by_burst,
-        sender_to_cwnds_by_burst_interp,
-        burst_idx,
-        interp_delta,
-    )
-
-    # Throw away senders that do not have any samples for this burst.
-    valid = [
-        bursts[burst_idx]
-        for bursts in sender_to_cwnds_by_burst_interp.values()
-        if bursts[burst_idx]
-    ]
-    if len(valid) != len(sender_to_cwnds_by_burst_interp):
-        print(
-            f"Warning: Burst {burst_idx} has "
-            f"{len(valid)}/{len(sender_to_cwnds_by_burst_interp)} "
-            "senders with at least one CWND sample."
-        )
-
-    return get_cwnd_metrics_helper(valid, interp_delta, percentiles)
-
-
-def get_cwnd_metrics_by_burst(
-    sender_to_cwnds_by_burst, num_bursts, interp_delta, percentiles
-):
-    sender_to_cwnds_by_burst_interp = collections.defaultdict(list)
-    cwnd_metrics_by_burst = [
-        get_cwnd_metrics(
-            sender_to_cwnds_by_burst,
-            sender_to_cwnds_by_burst_interp,
+    return [
+        get_metrics(
+            sender_to_x_by_burst_interp,
             burst_idx,
             interp_delta,
             percentiles,
         )
         for burst_idx in range(num_bursts)
     ]
-    for bursts_interp in sender_to_cwnds_by_burst_interp.values():
-        assert len(bursts_interp) == num_bursts
-    return sender_to_cwnds_by_burst_interp, cwnd_metrics_by_burst
 
 
 def graph_cwnd_metrics(
@@ -815,8 +805,11 @@ def graph_cwnd_metrics(
 if RUN:
     INTERP_DELTA = 1e5
     PERCENTILES = [0, 25, 50, 75, 95, 100]
-    SENDER_TO_CWNDS_BY_BURST_INTERP, CWND_METRICS_BY_BURST = get_cwnd_metrics_by_burst(
-        SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, INTERP_DELTA, PERCENTILES
+    SENDER_TO_CWNDS_BY_BURST_INTERP = get_sender_to_x_by_burst_interp(
+        SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, INTERP_DELTA
+    )
+    CWND_METRICS_BY_BURST = get_metrics_by_burst(
+        SENDER_TO_CWNDS_BY_BURST_INTERP, NUM_BURSTS, INTERP_DELTA, PERCENTILES
     )
     graph_cwnd_metrics(
         CWND_METRICS_BY_BURST,
@@ -831,9 +824,8 @@ if RUN:
 def calculate_average_queue_depth(
     depths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
 ):
-    num_bursts = len(depths_by_burst)
     avg_q_depth_by_burst = []
-    for burst_idx, depths in enumerate(depths_by_burst):
+    for depths in depths_by_burst:
         old_xs, old_ys = zip(*depths)
         start_x = old_xs[0]
         end_x = old_xs[-1]
@@ -980,14 +972,11 @@ def get_cwnd_metrics_across_bursts(
                         for sample in bursts[burst_idx]
                     ]
                 )
-
-    return get_cwnd_metrics_helper(flattened_flows, interp_delta, percentiles)
+    return get_metrics_helper(flattened_flows, interp_delta, percentiles)
 
 
 def graph_aggregate_cwnd_across_bursts(
     cwnd_metrics_across_bursts,
-    num_bursts,
-    interp_delta,
     percentiles,
     graph_dir,
     prefix,
@@ -1035,8 +1024,6 @@ if RUN:
     )
     graph_aggregate_cwnd_across_bursts(
         CWND_METRICS_ACROSS_BURSTS,
-        NUM_BURSTS,
-        INTERP_DELTA,
         PERCENTILES,
         GRAPH_DIR,
         EXP,
@@ -1048,7 +1035,6 @@ def graph_total_cwnd(
     cwnd_metrics_by_burst,
     num_bursts,
     bdp_bytes,
-    interp_delta,
     graph_dir,
     prefix,
 ):
@@ -1102,7 +1088,6 @@ if RUN:
         CWND_METRICS_BY_BURST,
         NUM_BURSTS,
         BDP_BYTES,
-        INTERP_DELTA,
         GRAPH_DIR,
         EXP,
     )
@@ -1377,8 +1362,11 @@ def get_all_metrics_for_exp(
     sender_to_cwnds_by_burst = get_sender_to_cwnds_by_burst(
         exp_dir, burst_times, sender_to_flow_times_by_burst
     )
-    sender_to_cwnds_by_burst_interp, cwnd_metrics_by_burst = get_cwnd_metrics_by_burst(
-        sender_to_cwnds_by_burst, num_bursts, interp_delta, percentiles
+    sender_to_cwnds_by_burst_interp = get_sender_to_x_by_burst_interp(
+        sender_to_cwnds_by_burst, num_bursts, interp_delta
+    )
+    sender_to_rtts_by_burst = get_sender_to_rtts_by_burst(
+        exp_dir, burst_times, sender_to_flow_times_by_burst
     )
     incast_q_metrics = get_queue_metrics_by_burst(exp_dir, "Incast Queue", burst_times)
     uplink_q_metrics = get_queue_metrics_by_burst(exp_dir, "Uplink Queue", burst_times)
@@ -1400,15 +1388,18 @@ def get_all_metrics_for_exp(
         "uplink_queue": uplink_q_metrics,
         "sender_to_cwnds_by_burst": sender_to_cwnds_by_burst,
         "sender_to_cwnds_by_burst_interp": sender_to_cwnds_by_burst_interp,
-        "cwnd_metrics_by_burst": cwnd_metrics_by_burst,
+        "cwnd_metrics_by_burst": get_metrics_by_burst(
+            sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
+        ),
         "cwnd_metrics_across_bursts": get_cwnd_metrics_across_bursts(
             sender_to_cwnds_by_burst_interp, num_bursts, interp_delta, percentiles
         ),
         "sender_to_congest_by_burst": get_sender_to_congest_by_burst(
             exp_dir, burst_times, sender_to_flow_times_by_burst
         ),
-        "sender_to_rtts_by_burst": get_sender_to_rtts_by_burst(
-            exp_dir, burst_times, sender_to_flow_times_by_burst
+        "sender_to_rtts_by_burst": sender_to_rtts_by_burst,
+        "sender_to_rtts_by_burst_interp": get_sender_to_x_by_burst_interp(
+            sender_to_rtts_by_burst, num_bursts, interp_delta
         ),
         "incast_q_above_empty": calculate_time_at_or_above_threshold(
             incast_q_metrics["depths"],
