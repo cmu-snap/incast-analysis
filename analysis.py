@@ -34,7 +34,7 @@ else:
 
 # %%
 if RUN:
-    EXP_DIR = "/data_hdd/incast/out/15ms-200-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-1_0da"
+    EXP_DIR = "/data_hdd/incast/out/15ms-200-0-3-TcpDctcp-10icwnd-0offset-none-rwnd1000000B-20tokens-4g-80ecn-1_0da"
     EXP = path.basename(EXP_DIR)
     GRAPH_DIR = path.join(EXP_DIR, "graphs")
     if not path.isdir(GRAPH_DIR):
@@ -166,12 +166,12 @@ def get_config_json(exp_dir):
 if RUN:
     BURST_TIMES = get_burst_times(EXP_DIR)
     # BURST_TIMES = [(start, (start + 0.03) if (end - start) > 0.03 else end) for start, end in BURST_TIMES]
-
+    BURST_TIMES = BURST_TIMES[:3]
     NUM_BURSTS = len(BURST_TIMES)
     CONFIG = get_config_json(EXP_DIR)
-    assert NUM_BURSTS == CONFIG["numBursts"]
+    # assert NUM_BURSTS == CONFIG["numBursts"]
 
-    ideal_sec = CONFIG["bytesPerSender"] * CONFIG["numSenders"] / (
+    ideal_sec = CONFIG["bytesPerBurstSender"] * CONFIG["numBurstSenders"] / (
         CONFIG["smallLinkBandwidthMbps"] * 1e6 / 8
     ) + (6 * CONFIG["delayPerLinkUs"] / 1e6)
     print(
@@ -949,7 +949,7 @@ def get_cwnd_metrics_across_bursts(
     # due to slow start.
     if num_bursts == 1:
         print(
-            "No results because we ignore the frst burst, but there is only one burst."
+            "Error: No results because we ignore the frst burst, but there is only one burst!"
         )
         return
 
@@ -1315,37 +1315,362 @@ if RUN:
 
 
 # %%
-def graph_ack_size_cdf(sender_to_congest_by_burst, num_bursts, mss, graph_dir, prefix):
+def graph_acks_per_congest_cdf(
+    sender_to_congest_by_burst, num_bursts, mss, graph_dir, prefix
+):
     fig, axes = get_axes(num_bursts, width=5)
     for burst_idx, ax in enumerate(axes):
-        ack_bytes = [
+        acks_per_congest_bytes = [
             b[2] / mss
             for sender_congests in sender_to_congest_by_burst.values()
             for b in sender_congests[burst_idx]
         ]
 
-        # Plot CDF of ACK size across all senders
-        count, bins_count = np.histogram(ack_bytes, bins=len(ack_bytes))
+        # Plot CDF of ACKs per congest across all senders
+        count, bins_count = np.histogram(
+            acks_per_congest_bytes, bins=len(acks_per_congest_bytes)
+        )
         ax.plot(
             bins_count[1:],
             np.cumsum(count / sum(count)),
             alpha=0.8,
-            label="ACKed MSS",
+            label="ACKs per congestion estimate",
         )
 
-        ax.set_title(f"CDF of ACKed MSS: Burst {burst_idx + 1} of {num_bursts}")
-        ax.set_xlabel("ACKed MSS")
+        ax.set_title(
+            f"CDF of ACKs per congestion estimate: Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax.set_xlabel("ACKs per congestion estimate")
         ax.set_ylabel("CDF")
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0, top=1.01)
 
     show(fig)
-    save(graph_dir, prefix, suffix="acks_cdf")
+    save(graph_dir, prefix, suffix="acks_per_congest_cdf")
 
 
 if RUN:
     MSS = 1448
-    graph_ack_size_cdf(SENDER_TO_CONGEST_BY_BURST, NUM_BURSTS, MSS, GRAPH_DIR, EXP)
+    graph_acks_per_congest_cdf(
+        SENDER_TO_CONGEST_BY_BURST, NUM_BURSTS, MSS, GRAPH_DIR, EXP
+    )
+
+
+# %%
+def parse_bytes_in_ack_line(line):
+    parts = line.strip().split(" ")
+    assert len(parts) == 6
+    (
+        time_sec,
+        sender_ip,
+        sender_port,
+        aggregator_ip,
+        aggregator_port,
+        bytes_in_ack,
+    ) = parts
+    time_sec = float(time_sec)
+    sender_port = int(sender_port)
+    aggregator_port = int(aggregator_port)
+    bytes_in_ack = int(bytes_in_ack)
+    return (
+        time_sec,
+        sender_ip,
+        sender_port,
+        aggregator_ip,
+        aggregator_port,
+        bytes_in_ack,
+    )
+
+
+def parse_bytes_in_ack(flp):
+    with open(flp, "r", encoding="utf-8") as fil:
+        return [parse_bytes_in_ack_line(line) for line in fil if line.strip()[0] != "#"]
+
+
+def get_sender_to_bytes_in_ack_by_burst(exp_dir, burst_times):
+    bytes_in_ack_flp = [
+        path.join(exp_dir, "logs", fln)
+        for fln in os.listdir(path.join(exp_dir, "logs"))
+        if fln.startswith("aggregator") and fln.endswith("_bytes_in_ack.log")
+    ]
+    assert len(bytes_in_ack_flp) == 1
+    bytes_in_ack_flp = bytes_in_ack_flp[0]
+
+    # Parse from disk. All sender stored together.
+    bytes_in_ack = parse_bytes_in_ack(bytes_in_ack_flp)
+
+    # Separate out the senders.
+    sender_to_bytes_in_ack = collections.defaultdict(list)
+    for record in bytes_in_ack:
+        sender_to_bytes_in_ack[record[1]].append((record[0], record[5]))
+
+    return {
+        sender: separate_samples_into_bursts(
+            # Read all congestion estimate samples for this sender
+            bytes_in_ack,
+            burst_times,
+            None,
+            filter_on_flow_times=False,
+            bookend=False,
+        )
+        for sender, bytes_in_ack in sender_to_bytes_in_ack.items()
+    }
+
+
+def graph_ack_size_cdf(
+    sender_to_bytes_in_ack_by_burst, num_bursts, mss, graph_dir, prefix
+):
+    fig, axes = get_axes(num_bursts, width=5)
+    for burst_idx, ax in enumerate(axes):
+        bytes_in_ack = [
+            b[1] / mss
+            for sender_bytes_in_ack in sender_to_bytes_in_ack_by_burst.values()
+            for b in sender_bytes_in_ack[burst_idx]
+        ]
+
+        # Plot CDF of ACKs per congest across all senders
+        count, bins_count = np.histogram(bytes_in_ack, bins=len(bytes_in_ack))
+        ax.plot(
+            bins_count[1:],
+            np.cumsum(count / sum(count)),
+            alpha=0.8,
+            label="ACK size",
+        )
+
+        ax.set_title(f"CDF of ACK size: Burst {burst_idx + 1} of {num_bursts}")
+        ax.set_xlabel("ACK size (MSS)")
+        ax.set_ylabel("CDF")
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0, top=1.01)
+
+    show(fig)
+    save(graph_dir, prefix, suffix="ack_size_cdf")
+
+
+if RUN:
+    SENDER_TO_BYTES_IN_ACK_BY_BURST = get_sender_to_bytes_in_ack_by_burst(
+        EXP_DIR, BURST_TIMES
+    )
+    graph_ack_size_cdf(SENDER_TO_BYTES_IN_ACK_BY_BURST, NUM_BURSTS, MSS, GRAPH_DIR, EXP)
+
+
+# %%
+# TODO: Graph throughput over time
+
+# Graph throughput at the aggregator
+
+# TODO: Add JSON log file mapping sender ID to sender IP
+
+
+# Log file will be similar to the 
+
+# Strategy:
+#   Create buckets, sum up the number of bytes arriving in each bucket. 
+
+
+def parse_data_bytes_line(line):
+    parts = line.strip().split(" ")
+    assert len(parts) == 6
+    (
+        time_sec,
+        sender_ip,
+        sender_port,
+        aggregator_ip,
+        aggregator_port,
+        frame_bytes,
+    ) = parts
+    time_sec = float(time_sec)
+    sender_port = int(sender_port)
+    aggregator_port = int(aggregator_port)
+    frame_bytes = int(frame_bytes)
+    return (
+        time_sec,
+        sender_ip,
+        sender_port,
+        aggregator_ip,
+        aggregator_port,
+        frame_bytes,
+    )
+
+
+def parse_data_bytes(flp):
+    with open(flp, "r", encoding="utf-8") as fil:
+        return [parse_data_bytes_line(line) for line in fil if line.strip()[0] != "#"]
+
+
+def get_sender_to_data_bytes_by_burst(exp_dir, burst_times):
+    data_bytes_flp = [
+        path.join(exp_dir, "logs", fln)
+        for fln in os.listdir(path.join(exp_dir, "logs"))
+        if fln.startswith("aggregator") and fln.endswith("_bytes_received.log")
+    ]
+    assert len(data_bytes_flp) == 1
+    data_bytes_flp = data_bytes_flp[0]
+
+    # Parse from disk. All sender stored together.
+    data_bytes = parse_data_bytes(data_bytes_flp)
+
+    # Separate out the senders.
+    sender_to_data_bytes = collections.defaultdict(list)
+    for record in data_bytes:
+        sender_to_data_bytes[record[1]].append((record[0], record[5]))
+
+    return {
+        sender: separate_samples_into_bursts(
+            # Read all congestion estimate samples for this sender
+            data_bytes,
+            burst_times,
+            None,
+            filter_on_flow_times=False,
+            bookend=False,
+        )
+        for sender, data_bytes in sender_to_data_bytes.items()
+    }
+
+
+def data_bytes_to_throughput(data_bytes, bucket_sec, rate_bps):
+    rate_bytes_per_sec = rate_bps / 8
+    
+    times, bytes = zip(*data_bytes)
+    assert (np.diff(times) >= 0).all()
+    start_sec = times[0]
+    end_sec = times[-1]
+    
+    buckets = [
+        # Bucket: [start time (inclusive), end time (exclusive), bytes]
+        [start_sec + i * bucket_sec, start_sec + (i + 1) * bucket_sec, 0]
+        # Start at -1 to add an extra bucket in case the first packet started 
+        # being transmitted before the start of the first bucket.
+        for i in range(-1, math.ceil((end_sec - start_sec) / bucket_sec))
+    ]
+
+    bucket_idx = 0
+    for transmit_end_sec, bytes in data_bytes:
+        # Find the bucket in which this transmission ended.
+        while transmit_end_sec > buckets[bucket_idx][1]:
+            bucket_idx += 1
+        
+        transmit_sec = bytes / rate_bytes_per_sec
+        transmit_start_sec = transmit_end_sec - transmit_sec
+
+        bucket_start_sec, bucket_end_sec, _ = buckets[bucket_idx]
+        if transmit_start_sec < bucket_start_sec:
+            # Make sure that this transmission does not span more than two buckets. The start time must be >= the start of the previous bucket.
+            assert transmit_start_sec >= buckets[bucket_idx - 1][0]
+            
+            # Split the bytes between previous and current buckets.
+            prev_bucket_fraction_sec = (bucket_start_sec - transmit_start_sec) / transmit_sec
+            
+            buckets[bucket_idx - 1][2] += prev_bucket_fraction_sec * bytes
+            buckets[bucket_idx][2] += (1 - prev_bucket_fraction_sec) * bytes
+        else:
+            # Assign all bytes to the current bucket.
+            buckets[bucket_idx][2] += bytes
+
+    # print(buckets[:10], sep="\n")
+    return [
+        # Pick the midpoint of the bucket as the x-coordinate.
+        ((end_sec + start_sec) / 2, bytes * 8 / bucket_sec)
+        for start_sec, end_sec, bytes in buckets
+    ]
+
+def data_bytes_to_throughput_gradient(data_bytes, rate_bps):
+    bytes_per_sec = rate_bps / 8
+    sec_per_byte = 1 / bytes_per_sec
+    
+    times, bytes = zip(*data_bytes)
+    assert (np.diff(times) >= 0).all()
+
+    # Calculate the arrival time of each byte in each packet.
+    one_byte_at_a_time = []
+    for transmit_end_sec, bytes in data_bytes:    
+        transmit_sec = bytes / bytes_per_sec
+        transmit_start_sec = transmit_end_sec - transmit_sec
+
+        # Calculate the arrival time of each byte in this packet.
+        for i in range(1, bytes + 1):
+            one_byte_at_a_time.append((transmit_start_sec + i * sec_per_byte, 1))
+
+    # The x-axis is the byte arrival time. The y-axis is the total bytes 
+    # received until that time, which is, in effect, a measure of distance or 
+    # position. We have a measure of position over time, so we can take the
+    # derivitive to calculate the rate or throughput. If we take the second 
+    # derivitive, then we get the acceleration, which in this case is the rate
+    # of change in throughput, which can be interpretted as the congestion 
+    # control algorithm's reactivity.
+    individual_byte_times, individual_bytes = zip(*one_byte_at_a_time)
+    cummulative_bytes = np.cumsum(individual_bytes)
+    rates = np.gradient(cummulative_bytes, individual_byte_times)
+    # Return: (time, position, rate, acceleration)
+    return zip(individual_byte_times, cummulative_bytes, rates * 8, np.gradient(rates, individual_byte_times) * 8)
+            
+
+def graph_throughput(
+    sender_to_data_bytes_by_burst,
+    rate_bps,
+    num_bursts,
+    graph_dir,
+    prefix,
+    bucket_sec,
+    merge_senders=False  # Whether to graph the throughput of individual senders separately or all flows summed together.
+):
+    fig, axes = get_axes(num_bursts)
+    for burst_idx, ax in enumerate(axes):
+        ax.set_title(
+            "Throughput at aggregator: "
+            f"Burst {burst_idx + 1} of {num_bursts}"
+        )
+        ax.set_xlabel("time (seconds)")
+        ax.set_ylabel("throughput (bps)")
+
+        if merge_senders:
+            merged = []
+            for sender, bursts in sender_to_data_bytes_by_burst.items():
+                if not bursts[burst_idx]:
+                    continue
+
+                merged.extend(bursts[burst_idx])
+            merged = sorted(merged, key=lambda x: x[0])
+
+            times, rates = zip(*data_bytes_to_throughput(merged, bucket_sec, rate_bps))
+            ax.plot(times, rates, alpha=0.8)
+        else:
+            for sender, bursts in sender_to_data_bytes_by_burst.items():
+                if not bursts[burst_idx]:
+                    continue
+                # times, _, rates, _ = zip(*data_bytes_to_throughput_gradient(bursts[burst_idx], rate_bps))
+                times, rates = zip(*data_bytes_to_throughput(bursts[burst_idx], bucket_sec, rate_bps))
+                ax.plot(times, rates, label=sender, alpha=0.8)
+
+        ax.set_ylim(bottom=0)
+
+        # # Draw a line at the downlink bandwidth
+        # ax.plot(
+        #     [xs[0], xs[-1]],
+        #     [marking_threshold_packets] * 2,
+        #     label="Marking threshold",
+        #     color="orange",
+        #     linestyle="dashed",
+        #     alpha=0.8,
+        # )
+        
+        show(fig)
+        save(graph_dir, prefix, suffix="rtt")
+
+
+if RUN:
+    # Set bucket granularity to 10 us. For reference, it takes about 1 us to receive 1 packet. 
+    TPUT_BUCKET_SEC = 1e-5
+
+    SENDER_TO_DATA_BYTES_BY_BURST = get_sender_to_data_bytes_by_burst(
+        EXP_DIR, BURST_TIMES
+    )
+    
+    graph_throughput(SENDER_TO_DATA_BYTES_BY_BURST, CONFIG["smallLinkBandwidthMbps"] * 1e6, NUM_BURSTS, GRAPH_DIR, EXP, TPUT_BUCKET_SEC, merge_senders=False)
+
+# %%
+if RUN:
+    graph_throughput(SENDER_TO_DATA_BYTES_BY_BURST, CONFIG["smallLinkBandwidthMbps"] * 1e6, NUM_BURSTS, GRAPH_DIR, EXP, TPUT_BUCKET_SEC, merge_senders=True)
 
 
 # %%
@@ -1396,6 +1721,9 @@ def get_all_metrics_for_exp(
         ),
         "sender_to_congest_by_burst": get_sender_to_congest_by_burst(
             exp_dir, burst_times, sender_to_flow_times_by_burst
+        ),
+        "sender_to_bytes_in_ack_by_burst": get_sender_to_bytes_in_ack_by_burst(
+            exp_dir, burst_times
         ),
         "sender_to_rtts_by_burst": sender_to_rtts_by_burst,
         "sender_to_rtts_by_burst_interp": get_sender_to_x_by_burst_interp(
