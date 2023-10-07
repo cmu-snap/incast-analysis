@@ -50,25 +50,33 @@ def load_one(exp_dir):
             try:
                 data = pickle.load(fil)
                 print(f"Succeeded loading from file: {data_flp}")
+                return data
             except:
                 print(f"Warning: Failed loading from file: {data_flp}")
 
     # Select experiments with 10 Gbps links, discard those with 2000 flows.
     # data = analysis.get_all_metrics_for_exp(exp_dir, filt=lambda c: c["smallLinkBandwidthMbps"] == 10000 and c["numBurstSenders"] != 2000)
-    data = analysis.get_all_metrics_for_exp(exp_dir)
+    try:
+        data = analysis.get_all_metrics_for_exp(exp_dir)
+    except:
+        print(f"Error during: {exp_dir}")
+        raise
+
     with open(data_flp, "wb") as fil:
         pickle.dump(data, fil)
     return data
 
 
-def load_all(sweep_dir, filt):
+def load_all(sweep_dir, filt=None):
     exp_dirs = [
         path.join(sweep_dir, dirn)
         for dirn in os.listdir(sweep_dir)
         if dirn != "graphs" and dirn != "tmpfs"
     ]
     exp_dirs = [
-        exp_dir for exp_dir in exp_dirs if filt(analysis.get_config_json(exp_dir))
+        exp_dir
+        for exp_dir in exp_dirs
+        if filt is None or filt(analysis.get_config_json(exp_dir))
     ]
 
     print(f"Loading {len(exp_dirs)} experiments...")
@@ -86,17 +94,25 @@ def load_all(sweep_dir, filt):
     return exp_to_data
 
 
-# %%
+# %% editable=true slideshow={"slide_type": ""}
 SWEEP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders"
-STATIC_EXP_TO_DATA = load_all(
+EXP_TO_DATA = load_all(
     SWEEP_DIR,
-    filt=lambda c: c["rwndStrategy"] == "static" and c["numBurstSenders"] < 1000,
+    # filt=lambda c: c["rwndStrategy"] == "static" and c["numBurstSenders"] < 1000,
 )
 
 
 # %%
-# static_exp_to_data = {exp: data for exp, data in exp_to_data.items() if data["config"]["rwndStrategy"] == "static"}
-# none_sweep_exp_to_data = {exp: data for exp, data in exp_to_data.items() if data["config"]["rwndStrategy"] == "none"}
+STATIC_EXP_TO_DATA = {
+    exp: data
+    for exp, data in EXP_TO_DATA.items()
+    if data["config"]["rwndStrategy"] == "static"
+}
+NONE_EXP_TO_DATA = {
+    exp: data
+    for exp, data in EXP_TO_DATA.items()
+    if data["config"]["rwndStrategy"] == "none"
+}
 
 
 # %% editable=true slideshow={"slide_type": ""}
@@ -226,25 +242,23 @@ def graph_queue(exp_to_data, sweep_dir):
     max_y = 0
     for i, data in enumerate(
         reversed(
-            sorted(
-                exp_to_data.values(), key=lambda p: p[1]["config"]["staticRwndBytes"]
-            )
+            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
         )
     ):
-        xs, ys = zip(*data["incast_queue"]["depths"][-1])
+        xs, avg_ys, _, _, _, _, _ = data["incast_queue_across_bursts"]
         xs = np.array(xs) - xs[0]
         xs = xs * 1e3
         # ax.plot(xs, ys, COLORS_FRIENDLY_HEX[i], drawstyle="steps-post", label=f"RWND: {round(data['config']['staticRwndBytes'] / 1024)} KB", linewidth=analysis.LINESIZE, alpha=0.7)
         ax.plot(
             xs,
-            ys,
+            avg_ys,
             drawstyle="steps-post",
             label=round(data["config"]["staticRwndBytes"] / 1024),
             linewidth=analysis.LINESIZE,
             alpha=0.7,
         )
         max_x = max(max_x, xs[-1])
-        max_y = max(max_y, ys)
+        max_y = max(max_y, *avg_ys)
 
     # Draw a line at the marking threshold
     marking_threshold_packets = next(iter(exp_to_data.values()))["config"][
@@ -282,7 +296,7 @@ def graph_queue(exp_to_data, sweep_dir):
         fontsize=analysis.FONTSIZE,
         bbox_to_anchor=(1.02, 0.5),
         loc="center left",
-        title="RWND (KB)",
+        title="RWND clamp (KB)",
         title_fontsize=analysis.FONTSIZE,
         ncols=2,
     )
@@ -292,8 +306,8 @@ def graph_queue(exp_to_data, sweep_dir):
     analysis.save(graph_dir, suffix="incast_queue")
 
 
-# for conns in [50, 100, 150, 200, 500]:
-for CONNS in [150]:
+for CONNS in [50, 100, 150, 200, 500]:
+    # for CONNS in [150]:
     print(CONNS)
     graph_queue(
         {
@@ -320,9 +334,7 @@ def graph_fct(exp_to_data, sweep_dir):
     num_bursts = next(iter(exp_to_data.values()))["config"]["numBursts"] - 1
     for i, data in enumerate(
         reversed(
-            sorted(
-                exp_to_data.values(), key=lambda p: p[1]["config"]["staticRwndBytes"]
-            )
+            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
         )
     ):
         durations = []
@@ -356,7 +368,7 @@ def graph_fct(exp_to_data, sweep_dir):
         fontsize=analysis.FONTSIZE,
         bbox_to_anchor=(1.02, 0.5),
         loc="center left",
-        title="RWND (KB)",
+        title="RWND clamp (KB)",
         title_fontsize=analysis.FONTSIZE,
         ncols=2,
     )
@@ -396,9 +408,7 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
     max_y = 0
     for i, data in enumerate(
         reversed(
-            sorted(
-                exp_to_data.values(), key=lambda p: p[1]["config"]["staticRwndBytes"]
-            )
+            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
         )
     ):
         # Last element in the tuple is the total cwnd
@@ -416,7 +426,7 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
             alpha=0.7,
         )
         max_x = max(max_x, xs[-1])
-        max_y = max(max_y, ys)
+        max_y = max(max_y, *ys)
 
     ax.set_xlabel("time (ms)", fontsize=analysis.FONTSIZE)
     ax.set_ylabel("per-flow in-flight data\n(p95, bytes)", fontsize=analysis.FONTSIZE)
@@ -428,7 +438,7 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
         fontsize=analysis.FONTSIZE,
         bbox_to_anchor=(1.02, 0.5),
         loc="center left",
-        title="RWND (KB)",
+        title="RWND clamp (KB)",
         title_fontsize=analysis.FONTSIZE,
         ncols=2,
     )
@@ -469,9 +479,7 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
     max_y = 0
     for i, data in enumerate(
         reversed(
-            sorted(
-                exp_to_data.values(), key=lambda p: p[1]["config"]["staticRwndBytes"]
-            )
+            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
         )
     ):
         bdp_bytes = (
@@ -498,7 +506,7 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
             alpha=0.7,
         )
         max_x = max(max_x, xs[-1])
-        max_y = max(max_y, ys)
+        max_y = max(max_y, *ys)
 
     # # Draw a line at the BDP
     # marking_threshold_packets = next(iter(exp_to_data.values()))["config"]["smallQueueMinThresholdPackets"]
@@ -522,7 +530,7 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
         fontsize=analysis.FONTSIZE,
         bbox_to_anchor=(1.02, 0.5),
         loc="center left",
-        title="RWND (KB)",
+        title="RWND clamp (KB)",
         title_fontsize=analysis.FONTSIZE,
         ncols=2,
     )

@@ -1220,8 +1220,8 @@ def graph_cwnd_change_cdf(sender_to_cwnds_by_burst, num_bursts, graph_dir, prefi
         save(graph_dir, prefix, suffix=f"cwnd_change_cdf_{burst_idx}")
 
 
-if RUN:
-    graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
+# if RUN:
+#     graph_cwnd_change_cdf(SENDER_TO_CWNDS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -1777,7 +1777,7 @@ if RUN:
 # graph_throughput(SENDER_TO_DATA_BYTES_BY_BURST, CONFIG["smallLinkBandwidthMbps"] * 1e6, NUM_BURSTS, GRAPH_DIR, EXP, TPUT_BUCKET_SEC, merge_senders=True)
 
 
-# %%
+# %% editable=true slideshow={"slide_type": ""}
 def get_queue_depth_across_bursts(
     depths_by_burst, num_bursts, interp_delta, percentiles
 ):
@@ -1807,7 +1807,7 @@ def get_queue_depth_across_bursts(
         assert len(new_xs) > 0
         new_ys = step_interp(*zip(*depths_by_burst[burst_idx]), new_xs)
         new_xs -= new_xs[0]
-        depths_by_burst_interp.append(zip(new_xs, new_ys))
+        depths_by_burst_interp.append(list(zip(new_xs, new_ys)))
 
     # Create a new xs array that covers the longest burst
     end_x = max(points[-1][0] for points in depths_by_burst_interp)
@@ -1839,10 +1839,10 @@ def graph_queue_across_bursts(
     fig, axes = get_axes()
 
     # Plot depth
-    xs, ys = zip(depths_across_bursts)
+    xs, avg_ys, _, _, _, _, _ = depths_across_bursts
     blue = "tab:blue"
     axes[0].plot(
-        xs, ys, drawstyle="steps-post", color=blue, linewidth=LINESIZE, alpha=0.8
+        xs, avg_ys, drawstyle="steps-post", color=blue, linewidth=LINESIZE, alpha=0.8
     )
 
     # Draw a line at the marking threshold
