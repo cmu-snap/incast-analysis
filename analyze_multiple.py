@@ -27,7 +27,6 @@ from matplotlib import pyplot as plt
 import analysis
 
 PARALLEL = True
-
 COLORS_FRIENDLY_HEX = [
     "#d73027",  # red
     "#fc8d59",  # orange
@@ -36,6 +35,7 @@ COLORS_FRIENDLY_HEX = [
     "#4575b4",  # dark blue
     "grey",
 ]
+CONNSS = [50, 100, 150, 200, 500]
 
 
 # %% editable=true slideshow={"slide_type": ""}
@@ -54,8 +54,6 @@ def load_one(exp_dir):
             except:
                 print(f"Warning: Failed loading from file: {data_flp}")
 
-    # Select experiments with 10 Gbps links, discard those with 2000 flows.
-    # data = analysis.get_all_metrics_for_exp(exp_dir, filt=lambda c: c["smallLinkBandwidthMbps"] == 10000 and c["numBurstSenders"] != 2000)
     try:
         data = analysis.get_all_metrics_for_exp(exp_dir)
     except:
@@ -98,7 +96,7 @@ def load_all(sweep_dir, filt=None):
 SWEEP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders"
 EXP_TO_DATA = load_all(
     SWEEP_DIR,
-    # filt=lambda c: c["rwndStrategy"] == "static" and c["numBurstSenders"] < 1000,
+    filt=lambda c: "2ms" in c["outputDirectory"] and c["numBurstSenders"] < 1000,
 )
 
 
@@ -138,6 +136,7 @@ def graph_avg_queue_depth(exp_to_data, sweep_dir, key, key_modifier, xlabel):
     fig, axes = analysis.get_axes(width=7)
     ax = axes[0]
 
+    # Plot a line for each number of flows.
     for i, conns in enumerate(connss):
         print(conns)
         points = [
@@ -147,8 +146,6 @@ def graph_avg_queue_depth(exp_to_data, sweep_dir, key, key_modifier, xlabel):
         ]
         points = sorted(points)
         xs, ys = zip(*points)
-        print(xs)
-        print(ys)
         ax.plot(
             xs,
             ys,
@@ -225,10 +222,9 @@ graph_avg_queue_depth(
 
 # graph_avg_tput(static_exp_to_data, sweep_dir, key="staticRwndBytes", key_modifier=lambda x: x / 1e3, xlabel="RWND clamp (KB)")
 
+
 # %% editable=true slideshow={"slide_type": ""}
 # Graph queue over time for various RWND thresholds.
-
-
 def graph_queue(exp_to_data, sweep_dir):
     graph_dir = path.join(sweep_dir, "graphs")
     if not path.isdir(graph_dir):
@@ -237,12 +233,31 @@ def graph_queue(exp_to_data, sweep_dir):
     fig, axes = analysis.get_axes(width=12)
     ax = axes[0]
 
-    # Plot a line for each marking threshold.
+    # Plot a line for No RWND tuning
+    none = [
+        data
+        for data in exp_to_data.values()
+        if data["config"]["rwndStrategy"] == "none"
+    ]
+    assert len(none) == 1
+
+    # Plot a line for each RWND clamp.
     max_x = 0
     max_y = 0
     for i, data in enumerate(
-        reversed(
-            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
+        none
+        + list(
+            reversed(
+                sorted(
+                    (
+                        data
+                        for data in exp_to_data.values()
+                        if data["config"]["rwndStrategy"] == "static"
+                        and data["config"]["staticRwndBytes"] < 11000
+                    ),
+                    key=lambda p: p["config"]["staticRwndBytes"],
+                )
+            )
         )
     ):
         xs, avg_ys, _, _, _, _, _ = data["incast_queue_across_bursts"]
@@ -253,7 +268,7 @@ def graph_queue(exp_to_data, sweep_dir):
             xs,
             avg_ys,
             drawstyle="steps-post",
-            label=round(data["config"]["staticRwndBytes"] / 1024),
+            label="None" if i == 0 else round(data["config"]["staticRwndBytes"] / 1024),
             linewidth=analysis.LINESIZE,
             alpha=0.7,
         )
@@ -303,18 +318,18 @@ def graph_queue(exp_to_data, sweep_dir):
 
     plt.tight_layout()
     analysis.show(fig)
-    analysis.save(graph_dir, suffix="incast_queue")
+    analysis.save(
+        graph_dir, suffix=f"incast_queue_{none[0]['config']['numBurstSenders']}flows"
+    )
 
 
 for CONNS in [50, 100, 150, 200, 500]:
-    # for CONNS in [150]:
     print(CONNS)
     graph_queue(
         {
             exp: data
-            for exp, data in STATIC_EXP_TO_DATA.items()
+            for exp, data in EXP_TO_DATA.items()
             if data["config"]["numBurstSenders"] == CONNS
-            and data["config"]["staticRwndBytes"] < 11000
         },
         SWEEP_DIR,
     )
@@ -322,19 +337,38 @@ for CONNS in [50, 100, 150, 200, 500]:
 
 # %%
 # Graph FCT distribution for various RWND thresholds
-
-
 def graph_fct(exp_to_data, sweep_dir):
     graph_dir = path.join(sweep_dir, "graphs")
     if not path.isdir(graph_dir):
         os.makedirs(graph_dir)
 
     fig, axes = analysis.get_axes(width=6)
+    ax = axes[0]
 
+    # Plot a line for No RWND tuning
+    none = [
+        data
+        for data in exp_to_data.values()
+        if data["config"]["rwndStrategy"] == "none"
+    ]
+    assert len(none) == 1
+
+    # Plot a line for each RWND clamp.
     num_bursts = next(iter(exp_to_data.values()))["config"]["numBursts"] - 1
     for i, data in enumerate(
-        reversed(
-            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
+        none
+        + list(
+            reversed(
+                sorted(
+                    (
+                        data
+                        for data in exp_to_data.values()
+                        if data["config"]["rwndStrategy"] == "static"
+                        and data["config"]["staticRwndBytes"] < 11000
+                    ),
+                    key=lambda p: p["config"]["staticRwndBytes"],
+                )
+            )
         )
     ):
         durations = []
@@ -346,25 +380,24 @@ def graph_fct(exp_to_data, sweep_dir):
                 ].values()
             ]
             durations.extend([(end - start) * 1e3 for start, _, end, _ in times])
-
         count, bins_count = np.histogram(durations, bins=len(durations))
-        # axes[0].plot(bins_count[1:], np.cumsum(count / sum(count)), COLORS_FRIENDLY_HEX[i], label=round(data['config']['staticRwndBytes'] / 1024), linewidth=analysis.LINESIZE, alpha=0.7)
-        axes[0].plot(
+        # ax.plot(bins_count[1:], np.cumsum(count / sum(count)), COLORS_FRIENDLY_HEX[i], label=round(data['config']['staticRwndBytes'] / 1024), linewidth=analysis.LINESIZE, alpha=0.7)
+        ax.plot(
             bins_count[1:],
             np.cumsum(count / sum(count)),
-            label=round(data["config"]["staticRwndBytes"] / 1024),
+            label="None" if i == 0 else round(data["config"]["staticRwndBytes"] / 1024),
             linewidth=analysis.LINESIZE,
             alpha=0.7,
         )
 
-    # axes[0].set_title(f"CDF of flow duration: Burst {burst_idx + 1} of {num_bursts}", fontsize=FONTSIZE)
-    axes[0].set_xlabel("flow duration (ms)", fontsize=analysis.FONTSIZE)
-    axes[0].set_ylabel("CDF", fontsize=analysis.FONTSIZE)
-    axes[0].tick_params(axis="x", labelsize=analysis.FONTSIZE)
-    axes[0].tick_params(axis="y", labelsize=analysis.FONTSIZE)
-    axes[0].set_xlim(left=0)
-    axes[0].set_ylim(bottom=0, top=1.01)
-    axes[0].legend(
+    # ax.set_title(f"CDF of flow duration: Burst {burst_idx + 1} of {num_bursts}", fontsize=FONTSIZE)
+    ax.set_xlabel("flow duration (ms)", fontsize=analysis.FONTSIZE)
+    ax.set_ylabel("CDF", fontsize=analysis.FONTSIZE)
+    ax.tick_params(axis="x", labelsize=analysis.FONTSIZE)
+    ax.tick_params(axis="y", labelsize=analysis.FONTSIZE)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0, top=1.01)
+    ax.legend(
         fontsize=analysis.FONTSIZE,
         bbox_to_anchor=(1.02, 0.5),
         loc="center left",
@@ -374,7 +407,10 @@ def graph_fct(exp_to_data, sweep_dir):
     )
 
     analysis.show(fig)
-    analysis.save(graph_dir, suffix="flow_duration_cdf")
+    analysis.save(
+        graph_dir,
+        suffix=f"flow_duration_cdf_{none[0]['config']['numBurstSenders']}flows",
+    )
 
 
 for CONNS in [50, 100, 150, 200, 500]:
@@ -383,9 +419,8 @@ for CONNS in [50, 100, 150, 200, 500]:
     graph_fct(
         {
             exp: data
-            for exp, data in STATIC_EXP_TO_DATA.items()
+            for exp, data in EXP_TO_DATA.items()
             if data["config"]["numBurstSenders"] == CONNS
-            and data["config"]["staticRwndBytes"] < 11000
         },
         SWEEP_DIR,
     )
@@ -393,8 +428,6 @@ for CONNS in [50, 100, 150, 200, 500]:
 
 # %% editable=true slideshow={"slide_type": ""}
 # Graph p95 CWND over time for various RWND thresholds
-
-
 def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
     graph_dir = path.join(sweep_dir, "graphs")
     if not path.isdir(graph_dir):
@@ -403,12 +436,31 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
     fig, axes = analysis.get_axes()
     ax = axes[0]
 
-    # Plot a line for each marking threshold.
+    # Plot a line for No RWND tuning
+    none = [
+        data
+        for data in exp_to_data.values()
+        if data["config"]["rwndStrategy"] == "none"
+    ]
+    assert len(none) == 1
+
+    # Plot a line for each RWND clamp.
     max_x = 0
     max_y = 0
     for i, data in enumerate(
-        reversed(
-            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
+        none
+        + list(
+            reversed(
+                sorted(
+                    (
+                        data
+                        for data in exp_to_data.values()
+                        if data["config"]["rwndStrategy"] == "static"
+                        and data["config"]["staticRwndBytes"] < 11000
+                    ),
+                    key=lambda p: p["config"]["staticRwndBytes"],
+                )
+            )
         )
     ):
         # Last element in the tuple is the total cwnd
@@ -421,7 +473,7 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
         ax.plot(
             xs,
             ys,
-            label=round(data["config"]["staticRwndBytes"] / 1024),
+            label="None" if i == 0 else round(data["config"]["staticRwndBytes"] / 1024),
             linewidth=analysis.LINESIZE,
             alpha=0.7,
         )
@@ -445,18 +497,19 @@ def graph_p95_bytes_in_flight(exp_to_data, sweep_dir):
 
     plt.tight_layout()
     analysis.show(fig)
-    analysis.save(graph_dir, suffix="p95_bytes_in_flight")
+    analysis.save(
+        graph_dir,
+        suffix=f"p95_bytes_in_flight_{none[0]['config']['numBurstSenders']}flows",
+    )
 
 
 for CONNS in [50, 100, 150, 200, 500]:
     print(CONNS)
-    # graph_p95_bytes_in_flight({exp: data for exp, data in static_exp_to_data.items() if data["config"]["numBurstSenders"] == CONNS and data["config"]["staticRwndBytes"] < 11000 and (data["config"]["staticRwndBytes"] / 1024) % 2 == 0}, sweep_dir)
     graph_p95_bytes_in_flight(
         {
             exp: data
-            for exp, data in STATIC_EXP_TO_DATA.items()
+            for exp, data in EXP_TO_DATA.items()
             if data["config"]["numBurstSenders"] == CONNS
-            and data["config"]["staticRwndBytes"] < 11000
         },
         SWEEP_DIR,
     )
@@ -464,8 +517,6 @@ for CONNS in [50, 100, 150, 200, 500]:
 
 # %%
 # Graph total CWND over time for various RWND thresholds
-
-
 def graph_total_cwnd(exp_to_data, sweep_dir):
     graph_dir = path.join(sweep_dir, "graphs")
     if not path.isdir(graph_dir):
@@ -474,12 +525,31 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
     fig, axes = analysis.get_axes()
     ax = axes[0]
 
-    # Plot a line for each marking threshold.
+    # Plot a line for No RWND tuning
+    none = [
+        data
+        for data in exp_to_data.values()
+        if data["config"]["rwndStrategy"] == "none"
+    ]
+    assert len(none) == 1
+
+    # Plot a line for each RWND clamp.
     max_x = 0
     max_y = 0
     for i, data in enumerate(
-        reversed(
-            sorted(exp_to_data.values(), key=lambda p: p["config"]["staticRwndBytes"])
+        none
+        + list(
+            reversed(
+                sorted(
+                    (
+                        data
+                        for data in exp_to_data.values()
+                        if data["config"]["rwndStrategy"] == "static"
+                        and data["config"]["staticRwndBytes"] < 11000
+                    ),
+                    key=lambda p: p["config"]["staticRwndBytes"],
+                )
+            )
         )
     ):
         bdp_bytes = (
@@ -501,7 +571,7 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
         ax.plot(
             xs,
             ys,
-            label=round(data["config"]["staticRwndBytes"] / 1024),
+            label="None" if i == 0 else round(data["config"]["staticRwndBytes"] / 1024),
             linewidth=analysis.LINESIZE,
             alpha=0.7,
         )
@@ -537,26 +607,19 @@ def graph_total_cwnd(exp_to_data, sweep_dir):
 
     plt.tight_layout()
     analysis.show(fig)
-    analysis.save(graph_dir, suffix="total_in_flight_data")
-
-
-# for exp, data in static_exp_to_data.items():
-#     print(exp)
-
-# d = static_exp_to_data["/data_hdd/ccanel/incast/incast_sweep_static/background-senders/15ms-100-0-11-TcpDctcp-10000mbps-2000000B-10icwnd-0offset-static-rwnd8192B-20tokens-4g-80ecn-1_0da"]
-# print(len(d["cwnd_metrics_across_bursts"]))
-# print(d["cwnd_metrics_across_bursts"][-7][1000:1010])
+    analysis.save(
+        graph_dir,
+        suffix=f"total_in_flight_data_{none[0]['config']['numBurstSenders']}flows",
+    )
 
 
 for CONNS in [50, 100, 150, 200, 500]:
     print(CONNS)
-    # graph_total_cwnd({exp: data for exp, data in static_exp_to_data.items() if data["config"]["numBurstSenders"] == CONNS and data["config"]["staticRwndBytes"] < 11000 and (data["config"]["staticRwndBytes"] / 1024) % 2 == 0}, sweep_dir)
     graph_total_cwnd(
         {
             exp: data
-            for exp, data in STATIC_EXP_TO_DATA.items()
+            for exp, data in EXP_TO_DATA.items()
             if data["config"]["numBurstSenders"] == CONNS
-            and data["config"]["staticRwndBytes"] < 11000
         },
         SWEEP_DIR,
     )
@@ -583,7 +646,7 @@ for CONNS in [50, 100, 150, 200, 500]:
 #     ys = [y * 1e3 for y in ys]
 
 #     fig, axes = analysis.get_axes(width=5)
-#     ax = axes[0]
+#     ax = ax
 
 #     ax.plot(xs, ys, "o-", alpha=0.8)
 
@@ -611,7 +674,7 @@ for CONNS in [50, 100, 150, 200, 500]:
 #     }
 
 #     fig, axes = analysis.get_axes(width=5)
-#     ax = axes[0]
+#     ax = ax
 
 #     for label, durations in sorted(label_to_durations.items()):
 #         plt.plot(
@@ -650,3 +713,68 @@ for CONNS in [50, 100, 150, 200, 500]:
 # %% editable=true slideshow={"slide_type": ""}
 # Randomly sample 1000 points
 # Plot CDF
+
+# %%
+if False:
+    del EXP_TO_DATA
+    EXP_TO_DATA_2MS = load_all(
+        SWEEP_DIR,
+        filt=lambda c: "2ms" in c["outputDirectory"] and c["numBurstSenders"] < 1000,
+    )
+    STATIC_EXP_TO_DATA_2MS = {
+        exp: data
+        for exp, data in EXP_TO_DATA.items()
+        if data["config"]["rwndStrategy"] == "static"
+    }
+
+    for CONNS in [50, 100, 150, 200, 500]:
+        # for CONNS in [150]:
+        print(CONNS)
+        graph_queue(
+            {
+                exp: data
+                for exp, data in STATIC_EXP_TO_DATA_2MS.items()
+                if data["config"]["numBurstSenders"] == CONNS
+                and data["config"]["staticRwndBytes"] < 11000
+            },
+            SWEEP_DIR,
+        )
+
+    for CONNS in [50, 100, 150, 200, 500]:
+        print(CONNS)
+        # graph_fct(static_exp_to_data_filtered, sweep_dir)
+        graph_fct(
+            {
+                exp: data
+                for exp, data in STATIC_EXP_TO_DATA_2MS.items()
+                if data["config"]["numBurstSenders"] == CONNS
+                and data["config"]["staticRwndBytes"] < 11000
+            },
+            SWEEP_DIR,
+        )
+
+    for CONNS in [50, 100, 150, 200, 500]:
+        print(CONNS)
+        # graph_p95_bytes_in_flight({exp: data for exp, data in static_exp_to_data.items() if data["config"]["numBurstSenders"] == CONNS and data["config"]["staticRwndBytes"] < 11000 and (data["config"]["staticRwndBytes"] / 1024) % 2 == 0}, sweep_dir)
+        graph_p95_bytes_in_flight(
+            {
+                exp: data
+                for exp, data in STATIC_EXP_TO_DATA_2MS.items()
+                if data["config"]["numBurstSenders"] == CONNS
+                and data["config"]["staticRwndBytes"] < 11000
+            },
+            SWEEP_DIR,
+        )
+
+    for CONNS in [50, 100, 150, 200, 500]:
+        print(CONNS)
+        # graph_total_cwnd({exp: data for exp, data in static_exp_to_data.items() if data["config"]["numBurstSenders"] == CONNS and data["config"]["staticRwndBytes"] < 11000 and (data["config"]["staticRwndBytes"] / 1024) % 2 == 0}, sweep_dir)
+        graph_total_cwnd(
+            {
+                exp: data
+                for exp, data in STATIC_EXP_TO_DATA_2MS.items()
+                if data["config"]["numBurstSenders"] == CONNS
+                and data["config"]["staticRwndBytes"] < 11000
+            },
+            SWEEP_DIR,
+        )
