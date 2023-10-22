@@ -27,7 +27,7 @@ from matplotlib import pyplot as plt
 
 import analysis
 
-PARALLEL = False
+PARALLEL = True
 COLORS_FRIENDLY_HEX = [
     "#d73027",  # red
     "#fc8d59",  # orange
@@ -173,13 +173,17 @@ def graph_avg_queue_length(exp_to_data, dur_ms, graph_dir):
                         or
                         # RWND
                         (
-                            data["config"]["rwndStrategy"] == "static"
+                            rwnd is not None
+                            and data["config"]["rwndStrategy"] == "static"
                             and data["config"]["staticRwndBytes"] == rwnd
                         )
                     )
                 )
             ]
-            assert len(data) == 1
+            # if len(data) == 0:
+            #     print(f"looking for RWND {rwnd} and {conns} flows")
+            #     print("\n".join(sorted(exp_to_data.keys())))
+            assert len(data) == 1, f"Expected 1 but found: {len(data)}"
             data = data[0]
             xs.append(data["config"]["numBurstSenders"])
 
@@ -227,7 +231,8 @@ def graph_avg_tput(exp_to_data, dur_ms, graph_dir):
                         or
                         # RWND
                         (
-                            data["config"]["rwndStrategy"] == "static"
+                            rwnd is not None
+                            and data["config"]["rwndStrategy"] == "static"
                             and data["config"]["staticRwndBytes"] == rwnd
                         )
                     )
@@ -529,7 +534,7 @@ def graph_total_inflight(exp_to_data, dur_ms, conns, graph_dir):
             * data["config"]["delayPerLinkUs"]
             / 1e6
         )
-        print(bdp_bytes)
+        # print(bdp_bytes)
         # Last element in the tuple is the total inflight
         xs, _, _, _, _, _, total_ys = data["inflight_metrics_across_bursts"]
         # print(total_ys[:10])
@@ -635,6 +640,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
 
     # Average queue length vs. number of flows; Line for each RWND clamp ###########################
 
+    print("Average queue length vs. RWND clamp:")
     graph_avg_queue_length(exp_to_data, dur_ms, graph_dir)
 
     # Average throughput vs. number of flows; Line for each RWND clamp ############################
@@ -709,8 +715,8 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
 
         graph_fct(
             lines,
-            dur_ms,
             graph_dir,
+            dur_ms,
             f"noRwnd_{dur_ms}ms_{none['config']['numBurstSenders']}flows_fct",
         )
 
@@ -773,7 +779,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
                 )
             )
 
-        graph_fct(lines, dur_ms, graph_dir, f"staticRwnd_{dur_ms}ms_{conns}flows_fct")
+        graph_fct(lines, graph_dir, dur_ms, f"staticRwnd_{dur_ms}ms_{conns}flows_fct")
 
         # Queue length #############################################################################
 
@@ -887,10 +893,12 @@ def load_duration(sweep_dir, dur_ms, reload):
             sweep_dir,
             filt=lambda c: (
                 f"{dur_ms}ms" in c["outputDirectory"]
-                # and c["numBurstSenders"] <= 1000
-                and c["numBurstSenders"] < 1000
+                and c["numBurstSenders"] <= 1000
+                # and c["numBurstSenders"] < 1000
                 and c["smallLinkBandwidthMbps"] == 10000
                 and c["smallQueueMinThresholdPackets"] == 65
+                # and c["smallQueueSizePackets"] == 667
+                and c["smallQueueSizePackets"] == 1334
                 and c["rwndStrategy"] in ["none", "static"]
                 # and c["numBurstSenders"] in CONNSS
             ),
@@ -912,10 +920,14 @@ SWEEP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders"
 GRAPH_DIR = path.join(SWEEP_DIR, "graphs")
 if not path.isdir(GRAPH_DIR):
     os.makedirs(GRAPH_DIR)
-EXP_TO_DATA_2MS = load_duration(SWEEP_DIR, 2, True)
 
 # %%
+EXP_TO_DATA_2MS = load_duration(SWEEP_DIR, 2, False)
 generate_graphs_for_duration(EXP_TO_DATA_2MS, 2, GRAPH_DIR)
+
+# %%
+EXP_TO_DATA_15MS = load_duration(SWEEP_DIR, 15, False)
+generate_graphs_for_duration(EXP_TO_DATA_15MS, 15, GRAPH_DIR)
 
 # %%
 # delack_sweep_dir = "/data_hdd/incast/out/delack_sweep_2ms"

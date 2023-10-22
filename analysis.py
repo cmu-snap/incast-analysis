@@ -740,11 +740,14 @@ if RUN:
 
 # %% editable=true slideshow={"slide_type": ""}
 # Inspired by https://stackoverflow.com/questions/10058227/calculating-mean-of-arrays-with-different-lengths
-def tolerant_metrics(xs, arrays, interp_delta, percentiles):
+def tolerant_metrics(xs, arrays, percentiles):
     # Map x value to index. Used to quickly determine where each array starts
     # relative to the overall xs.
     xs_map = {
-        round(x, int(math.log(interp_delta, 10))): idx for idx, x in enumerate(xs)
+        # Do not need to do round(x, decimal_places) because xs are already at
+        # intervals of 1 / interp_delta.
+        x: idx
+        for idx, x in enumerate(xs)
     }
 
     # Create 2d array to fit the largest array
@@ -753,8 +756,21 @@ def tolerant_metrics(xs, arrays, interp_delta, percentiles):
 
     for idx, array in enumerate(arrays):
         # Look up this array's start position
-        start_idx = xs_map[round(array[0][0], int(math.log(interp_delta, 10)))]
-        combined_2d[start_idx : start_idx + len(array), idx] = list(zip(*array))[1]
+        # Do not need to do round(x, decimal_places) because xs are already at
+        # intervals of 1 / interp_delta.
+        start_idx = xs_map[array[0][0]]
+
+        source = array[: (len(combined_2d) - start_idx)]
+        if len(array) != len(source):
+            print(f"Warning: Dropping {len(array) - len(source)} samples!")
+
+        # Verify alignment.
+        assert xs[start_idx] == source[0][0]
+        assert xs[start_idx + len(source) - 1] == source[-1][0]
+
+        # combined_2d[start_idx : start_idx + len(array), idx] = list(zip(*array))[1]
+        source = list(zip(*source))[1]
+        combined_2d[start_idx : start_idx + len(array), idx] = source
 
     return (
         combined_2d.mean(axis=-1),
@@ -848,36 +864,48 @@ def get_metrics(
     interp_delta,
     percentiles,
 ):
+    # Extract the desired burst from each sender.
     # Throw away senders that do not have any samples for this burst.
-    valid = [
+    valid_senders = [
         bursts[burst_idx]
         for bursts in sender_to_x_by_burst_interp.values()
         if bursts[burst_idx]
     ]
-    if len(valid) != len(sender_to_x_by_burst_interp):
+    if len(valid_senders) != len(sender_to_x_by_burst_interp):
         print(
-            f"Warning: Burst {burst_idx} has "
-            f"{len(valid)}/{len(sender_to_x_by_burst_interp)} "
+            f"Warning: Burst {burst_idx} has only "
+            f"{len(valid_senders)}/{len(sender_to_x_by_burst_interp)} "
             "senders with at least one sample."
         )
-    return get_metrics_helper(valid, interp_delta, percentiles)
+    return get_metrics_helper(valid_senders, interp_delta, percentiles)
 
 
 def get_metrics_helper(
-    valid,
+    senders,
     interp_delta,
     percentiles,
 ):
+    # senders is an array of data for burst i, with one element (subarray) for each
+    # sender:
+    #     senders = [
+    #                 [ samples from burst i for sender 0     ],
+    #                   ...                                    ,
+    #                 [ samples from burst i for sender n - 1 ]
+    #               ]
+
     # Determine the overall x-axis range for this burst, across all valid senders.
+    # print("max from senders:", max(samples[-1][0] for samples in senders))
     xs = get_aligned_xs(
-        min(samples[0][0] for samples in valid),
-        max(samples[-1][0] for samples in valid),
+        min(samples[0][0] for samples in senders),
+        max(samples[-1][0] for samples in senders),
         interp_delta,
     )
+    # print("max from aligned xs:", xs[-1])
+    # print(", ".join(str(z) for z in list(zip(*senders[5]))[0]))
 
     # Calculate and verify metrics.
     avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, sum_ys = tolerant_metrics(
-        xs, valid, interp_delta, percentiles
+        xs, senders, percentiles
     )
     assert len(xs) == len(avg_ys)
     assert len(xs) == len(stdev_ys)
@@ -2052,7 +2080,7 @@ def get_queue_depth_across_bursts(
 
     # Calculate across bursts.
     avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, sum_ys = tolerant_metrics(
-        xs, depths_by_burst_interp, interp_delta, percentiles
+        xs, depths_by_burst_interp, percentiles
     )
     assert len(xs) == len(avg_ys)
     assert len(xs) == len(stdev_ys)
