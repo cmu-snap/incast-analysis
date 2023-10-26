@@ -37,7 +37,7 @@ else:
 
 # %%
 if RUN:
-    EXP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders/2ms-25-0-11-TcpDctcp-10000mbps-1000000B-10icwnd-0offset-static-rwnd2048B-20tokens-4g-65ecn-1_0da"
+    EXP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders/15ms-1000-0-11-TcpDctcp-10000mbps-1000000B-10icwnd-0offset-static-rwnd8192B-20tokens-4g-65ecn-1_0da"
     EXP = path.basename(EXP_DIR)
     GRAPH_DIR = path.join(EXP_DIR, "graphs")
     if not path.isdir(GRAPH_DIR):
@@ -240,7 +240,7 @@ if RUN:
 
 
 # %%
-def parse_depth_line(line):
+def parse_length_line(line):
     # Format: <timestamp seconds> <num packets> <backlog time microseconds>
     parts = line.strip().split(" ")
     assert len(parts) == 2
@@ -268,15 +268,15 @@ def parse_drop_line(line):
     return time_sec, drop_type
 
 
-def get_depths_by_burst(exp_dir, queue_prefix, burst_times):
-    depth_samples = []
+def get_lengths_by_burst(exp_dir, queue_prefix, burst_times):
+    length_samples = []
     with open(
         path.join(exp_dir, "logs", f"{queue_prefix}_depth.log"), "r", encoding="utf-8"
     ) as fil:
-        depth_samples = [
-            parse_depth_line(line) for line in fil if line.strip()[0] != "#"
+        length_samples = [
+            parse_length_line(line) for line in fil if line.strip()[0] != "#"
         ]
-    return separate_samples_into_bursts(depth_samples, burst_times)
+    return separate_samples_into_bursts(length_samples, burst_times)
 
 
 def get_marks_by_burst(exp_dir, queue_prefix, burst_times):
@@ -305,7 +305,7 @@ def get_queue_metrics_by_burst(exp_dir, queue_name, burst_times):
     )
     assert queue_prefix is not None
     return {
-        "depths": get_depths_by_burst(exp_dir, queue_prefix, burst_times),
+        "lengths": get_lengths_by_burst(exp_dir, queue_prefix, burst_times),
         "marks": get_marks_by_burst(exp_dir, queue_prefix, burst_times),
         "drops": get_drops_by_burst(exp_dir, queue_prefix, burst_times),
     }
@@ -313,7 +313,7 @@ def get_queue_metrics_by_burst(exp_dir, queue_name, burst_times):
 
 def graph_queue(
     queue_name,
-    depths_by_burst,
+    lengths_by_burst,
     marks_by_burst,
     drops_by_burst,
     marking_threshold_packets,
@@ -321,26 +321,26 @@ def graph_queue(
     graph_dir,
     prefix,
 ):
-    for burst_idx, burst in enumerate(depths_by_burst):
-        # if burst_idx != len(depths_by_burst) - 1:
+    for burst_idx, burst in enumerate(lengths_by_burst):
+        # if burst_idx != len(lengths_by_burst) - 1:
         #     continue
         fig, axes = get_axes()
         ax = axes[0]
 
-        # Plot depth
-        depth_xs, depth_ys = zip(*burst)
-        depth_xs = np.asarray(depth_xs)
-        depth_xs = depth_xs * 1e3
+        # Plot length
+        length_xs, length_ys = zip(*burst)
+        length_xs = np.asarray(length_xs)
+        length_xs = length_xs * 1e3
         ax.plot(
-            depth_xs,
-            depth_ys,
+            length_xs,
+            length_ys,
             label="queue length",
             drawstyle="steps-post",
             linewidth=LINESIZE,
             alpha=0.8,
         )
-        max_x = depth_xs[-1]
-        max_y = max(depth_ys)
+        max_x = length_xs[-1]
+        max_y = max(length_ys)
 
         # If there are marks, plot them..
         if burst_idx < len(marks_by_burst) and marks_by_burst[burst_idx]:
@@ -419,12 +419,12 @@ def graph_queue(
                 prefix
                 + "-"
                 + "_".join(queue_name.split(" ")).lower()
-                + f"-burst{burst_idx}-depth.dat",
+                + f"-burst{burst_idx}-length.dat",
             ),
             "w",
             encoding="utf-8",
         ) as fil:
-            fil.write("time depth\n")
+            fil.write("time length\n")
             fil.write("\n".join(f"{x} {y}" for x, y in burst))
 
         show(fig)
@@ -441,7 +441,7 @@ if RUN:
     INCAST_Q_METRICS = get_queue_metrics_by_burst(EXP_DIR, "Incast Queue", BURST_TIMES)
     graph_queue(
         "Incast Queue",
-        INCAST_Q_METRICS["depths"],
+        INCAST_Q_METRICS["lengths"],
         INCAST_Q_METRICS["marks"],
         INCAST_Q_METRICS["drops"],
         MARKING_THRESHOLD,
@@ -452,20 +452,20 @@ if RUN:
 
 
 # %%
-def calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_sec):
+def calculate_time_at_or_above_threshold_helper(lengths, thresh, start_sec, end_sec):
     # Identify crossover points and above regions points by filtering burst_samples.
     above_regions = []
-    last_depth = None
+    last_length = None
     last_cross_up = None
-    for x, depth in depths:
-        if depth < thresh:
+    for x, length in lengths:
+        if length < thresh:
             if last_cross_up is not None:
                 above_regions.append((last_cross_up, x))
                 last_cross_up = None
-        elif depth >= thresh:
-            if last_depth is None or last_depth < thresh:
+        elif length >= thresh:
+            if last_length is None or last_length < thresh:
                 last_cross_up = x
-        last_depth = depth
+        last_length = length
     if last_cross_up is not None:
         above_regions.append((last_cross_up, end_sec))
 
@@ -477,19 +477,19 @@ def calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_s
     return above_sec, total_sec, above_sec / total_sec * 100
 
 
-def calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh):
+def calculate_time_at_or_above_threshold(lengths_by_burst, burst_times, thresh):
     return [
-        calculate_time_at_or_above_threshold_helper(depths, thresh, start_sec, end_sec)
-        for burst_idx, (depths, (start_sec, end_sec)) in enumerate(
-            zip(depths_by_burst, burst_times)
+        calculate_time_at_or_above_threshold_helper(lengths, thresh, start_sec, end_sec)
+        for burst_idx, (lengths, (start_sec, end_sec)) in enumerate(
+            zip(lengths_by_burst, burst_times)
         )
     ]
 
 
-def print_q_above_thresh(depths_by_burst, burst_times, thresh, label):
+def print_q_above_thresh(lengths_by_burst, burst_times, thresh, label):
     num_bursts = len(burst_times)
     for burst_idx, (above_sec, _, perc) in enumerate(
-        calculate_time_at_or_above_threshold(depths_by_burst, burst_times, thresh)
+        calculate_time_at_or_above_threshold(lengths_by_burst, burst_times, thresh)
     ):
         print(
             f"Burst {burst_idx + 1} of {num_bursts} "
@@ -499,17 +499,17 @@ def print_q_above_thresh(depths_by_burst, burst_times, thresh, label):
 
 if RUN:
     print_q_above_thresh(
-        INCAST_Q_METRICS["depths"], BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
+        INCAST_Q_METRICS["lengths"], BURST_TIMES, MARKING_THRESHOLD, "marking threshold"
     )
 
 # %%
 if RUN:
-    print_q_above_thresh(INCAST_Q_METRICS["depths"], BURST_TIMES, 1, "empty")
+    print_q_above_thresh(INCAST_Q_METRICS["lengths"], BURST_TIMES, 1, "empty")
 
 # %%
 if RUN:
     print_q_above_thresh(
-        INCAST_Q_METRICS["depths"], BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
+        INCAST_Q_METRICS["lengths"], BURST_TIMES, QUEUE_CAPACITY * 0.9, "90% capacity"
     )
 
 # %%
@@ -517,7 +517,7 @@ if RUN:
     UPLINK_Q_METRICS = get_queue_metrics_by_burst(EXP_DIR, "Uplink Queue", BURST_TIMES)
     graph_queue(
         "Uplink Queue",
-        UPLINK_Q_METRICS["depths"],
+        UPLINK_Q_METRICS["lengths"],
         UPLINK_Q_METRICS["marks"],
         UPLINK_Q_METRICS["drops"],
         MARKING_THRESHOLD,
@@ -554,8 +554,8 @@ def get_sender_to_flow_times_by_burst(exp_dir):
         return parse_flow_times(json.load(fil))
 
 
-def get_active_conns_by_burst(sender_to_flow_times_by_burst, num_bursts):
-    active_conns_by_burst = []
+def get_active_flows_by_burst(sender_to_flow_times_by_burst, num_bursts):
+    active_flows_by_burst = []
     for burst_idx in range(num_bursts):
         times = [
             flow_times_by_burst[burst_idx]
@@ -567,35 +567,35 @@ def get_active_conns_by_burst(sender_to_flow_times_by_burst, num_bursts):
         active = [serialized[0]]
         for time, action in serialized[1:]:
             active.append((time, active[-1][1] + action))
-        active_conns_by_burst.append(active)
-    return active_conns_by_burst
+        active_flows_by_burst.append(active)
+    return active_flows_by_burst
 
 
-def graph_active_connections(active_conns_by_burst, num_bursts, graph_dir, prefix):
+def graph_active_flows(active_flows_by_burst, num_bursts, graph_dir, prefix):
     for burst_idx in range(num_bursts):
         fig, axes = get_axes()
         ax = axes[0]
 
-        xs, ys = zip(*active_conns_by_burst[burst_idx])
+        xs, ys = zip(*active_flows_by_burst[burst_idx])
         ax.plot(xs, ys, drawstyle="steps-post", alpha=0.8)
 
         # ax.set_title(
-        #     f"Active connections over time: Burst {burst_idx + 1} of {num_bursts}"
+        #     f"Active flows over time: Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
         ax.set_ylabel("active flows")
         ax.set_ylim(bottom=0)
 
         show(fig)
-        save(graph_dir, prefix, suffix=f"active_connections_{burst_idx}")
+        save(graph_dir, prefix, suffix=f"active_flows_{burst_idx}")
 
 
 if RUN:
     SENDER_TO_FLOW_TIMES_BY_BURST = get_sender_to_flow_times_by_burst(EXP_DIR)
-    ACTIVE_CONNS_BY_BURST = get_active_conns_by_burst(
+    ACTIVE_flowS_BY_BURST = get_active_flows_by_burst(
         SENDER_TO_FLOW_TIMES_BY_BURST, NUM_BURSTS
     )
-    graph_active_connections(ACTIVE_CONNS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
+    graph_active_flows(ACTIVE_flowS_BY_BURST, NUM_BURSTS, GRAPH_DIR, EXP)
 
 
 # %%
@@ -688,7 +688,7 @@ def graph_sender_cwnd(
         ax = axes[0]
 
         # ax.set_title(
-        #     f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        #     f"CWND of active flows: Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
         ax.set_ylabel(ylabel)
@@ -954,7 +954,7 @@ def graph_cwnd_metrics(
         )
         ax.plot(xs, avg_ys, label="avg", alpha=0.8)
         # ax.set_title(
-        #     f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        #     f"CWND of active flows: Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
         ax.set_ylabel(ylabel)
@@ -977,7 +977,7 @@ def graph_cwnd_metrics(
                 label=f"p{percentiles[idx]}",
             )
         # ax.set_title(
-        #     f"CWND of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        #     f"CWND of active flows: Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
         ax.set_ylabel(ylabel)
@@ -1037,36 +1037,36 @@ if RUN:
 
 
 # %%
-def calculate_average_queue_depth(
-    depths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
+def calculate_average_queue_length(
+    lengths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
 ):
-    avg_q_depth_by_burst = []
-    for depths in depths_by_burst:
-        old_xs, old_ys = zip(*depths)
+    avg_q_length_by_burst = []
+    for lengths in lengths_by_burst:
+        old_xs, old_ys = zip(*lengths)
         new_xs = get_aligned_xs(old_xs[0], old_xs[-1], interp_delta)
         new_ys = step_interp(old_xs, old_ys, new_xs)
         avg_q_packets = new_ys.mean()
         avg_q_bytes = avg_q_packets * bytes_per_packet
         avg_q_us = avg_q_bytes / (bandwidth_bps / 8) * 1e6
-        avg_q_depth_by_burst.append((avg_q_packets, avg_q_bytes, avg_q_us))
-    return avg_q_depth_by_burst
+        avg_q_length_by_burst.append((avg_q_packets, avg_q_bytes, avg_q_us))
+    return avg_q_length_by_burst
 
 
-def print_avg_q_depth(
-    depths_by_burst, num_bursts, interp_delta, bandwidth_bps, bytes_per_packet
+def print_avg_q_length(
+    lengths_by_burst, num_bursts, interp_delta, bandwidth_bps, bytes_per_packet
 ):
     for burst_idx, (
         avg_q_packets,
         avg_q_bytes,
         avg_q_us,
     ) in enumerate(
-        calculate_average_queue_depth(
-            depths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
+        calculate_average_queue_length(
+            lengths_by_burst, interp_delta, bandwidth_bps, bytes_per_packet
         )
     ):
         print(
             f"Burst {burst_idx + 1} of {num_bursts} - "
-            f"Average queue depth: {avg_q_packets:.2f} packets, "
+            f"Average queue length: {avg_q_packets:.2f} packets, "
             f"{avg_q_bytes:.2f} bytes, {avg_q_us:.2f} us"
         )
 
@@ -1074,8 +1074,8 @@ def print_avg_q_depth(
 if RUN:
     BYTES_PER_PACKET = 1500
     BANDWIDTH_BITSPS = CONFIG["smallLinkBandwidthMbps"] * 1e6
-    print_avg_q_depth(
-        INCAST_Q_METRICS["depths"],
+    print_avg_q_length(
+        INCAST_Q_METRICS["lengths"],
         NUM_BURSTS,
         INTERP_DELTA,
         BANDWIDTH_BITSPS,
@@ -1085,17 +1085,17 @@ if RUN:
 
 # %%
 def graph_estimated_queue_ingress_rate(
-    depths_by_burst,
+    lengths_by_burst,
     bandwidth_bps,
     bytes_per_packet,
     interp_delta,
     graph_dir,
     prefix,
 ):
-    for burst_idx, depths in enumerate(depths_by_burst):
+    for burst_idx, lengths in enumerate(lengths_by_burst):
         fig, axes = get_axes()
         ax = axes[0]
-        old_xs, old_ys = zip(*depths)
+        old_xs, old_ys = zip(*lengths)
         new_xs = get_aligned_xs(old_xs[0], old_xs[-1], interp_delta)
         new_ys = step_interp(old_xs, old_ys, new_xs)
         new_ys *= 8 * bytes_per_packet
@@ -1127,7 +1127,7 @@ def graph_estimated_queue_ingress_rate(
 
 if RUN:
     graph_estimated_queue_ingress_rate(
-        INCAST_Q_METRICS["depths"],
+        INCAST_Q_METRICS["lengths"],
         BANDWIDTH_BITSPS,
         BYTES_PER_PACKET,
         INTERP_DELTA,
@@ -1238,7 +1238,7 @@ def graph_aggregate_cwnd_across_bursts(
             label=f"p{percentiles[idx]}",
         )
         max_y = max(max_y, *nxt)
-    # ax.set_title("CWND of active connections across all bursts")
+    # ax.set_title("CWND of active flows across all bursts")
     ax.set_xlabel("time (ms)", fontsize=FONTSIZE)
     ax.set_ylabel(f"per-flow {ylabel}\n(KB)", fontsize=FONTSIZE)
     ax.tick_params(axis="x", labelsize=FONTSIZE)
@@ -1512,7 +1512,7 @@ def graph_sender_dctcp_alpha(sender_to_congest_by_burst, num_bursts, graph_dir, 
         ax = axes[0]
 
         # ax.set_title(
-        #     f"Alpha of active connections: Burst {burst_idx + 1} of {num_bursts}"
+        #     f"Alpha of active flows: Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
         ax.set_ylabel("alpha")
@@ -1584,7 +1584,7 @@ def graph_sender_rtt(sender_to_rtts_by_burst, num_bursts, graph_dir, prefix):
         ax = axes[0]
 
         # ax.set_title(
-        #     "Sender-measured RTT of active connections: "
+        #     "Sender-measured RTT of active flows: "
         #     f"Burst {burst_idx + 1} of {num_bursts}"
         # )
         ax.set_xlabel("time (seconds)")
@@ -2037,8 +2037,8 @@ if RUN:
 
 
 # %% editable=true slideshow={"slide_type": ""}
-def get_queue_depth_across_bursts(
-    depths_by_burst, num_bursts, interp_delta, percentiles
+def get_queue_length_across_bursts(
+    lengths_by_burst, num_bursts, interp_delta, percentiles
 ):
     # We always ignore the first burst, since it is different than the others
     # due to slow start.
@@ -2049,23 +2049,23 @@ def get_queue_depth_across_bursts(
         return
 
     # Interp each burst
-    depths_by_burst_interp = []
+    lengths_by_burst_interp = []
     for burst_idx in range(1, num_bursts):
-        assert len(depths_by_burst[burst_idx]) > 0
+        assert len(lengths_by_burst[burst_idx]) > 0
         new_xs = get_aligned_xs(
-            depths_by_burst[burst_idx][0][0],
-            depths_by_burst[burst_idx][-1][0],
+            lengths_by_burst[burst_idx][0][0],
+            lengths_by_burst[burst_idx][-1][0],
             interp_delta,
         )
         assert len(new_xs) > 0
-        new_ys = step_interp(*zip(*depths_by_burst[burst_idx]), new_xs)
+        new_ys = step_interp(*zip(*lengths_by_burst[burst_idx]), new_xs)
         new_xs -= new_xs[0]
-        depths_by_burst_interp.append(list(zip(new_xs, new_ys)))
+        lengths_by_burst_interp.append(list(zip(new_xs, new_ys)))
 
     # Create a new xs array that covers the longest burst
-    # for points in depths_by_burst_interp:
+    # for points in lengths_by_burst_interp:
     #     print(points[0][0], points[-1][0], len(points))
-    # end_x = max(points[-1][0] for points in depths_by_burst_interp)
+    # end_x = max(points[-1][0] for points in lengths_by_burst_interp)
     # print("end_x", end_x)
     # print("interp_delta", interp_delta)
     # print("end_x * interp_delta", end_x * interp_delta)
@@ -2075,12 +2075,12 @@ def get_queue_depth_across_bursts(
     #     [x / interp_delta for x in range(math.floor(end_x * interp_delta) + 1 + 1)]
     # )
     xs = get_aligned_xs(
-        0, max(points[-1][0] for points in depths_by_burst_interp), interp_delta
+        0, max(points[-1][0] for points in lengths_by_burst_interp), interp_delta
     )
 
     # Calculate across bursts.
     avg_ys, stdev_ys, min_ys, max_ys, percentiles_ys, sum_ys = tolerant_metrics(
-        xs, depths_by_burst_interp, percentiles
+        xs, lengths_by_burst_interp, percentiles
     )
     assert len(xs) == len(avg_ys)
     assert len(xs) == len(stdev_ys)
@@ -2093,7 +2093,7 @@ def get_queue_depth_across_bursts(
 
 def graph_queue_across_bursts(
     queue_name,
-    depths_across_bursts,
+    lengths_across_bursts,
     marking_threshold_packets,
     capacity_packets,
     graph_dir,
@@ -2102,8 +2102,8 @@ def graph_queue_across_bursts(
     fig, axes = get_axes()
     ax = axes[0]
 
-    # Plot depths
-    xs, avg_ys, _, _, _, _, _ = depths_across_bursts
+    # Plot lengths
+    xs, avg_ys, _, _, _, _, _ = lengths_across_bursts
     xs = xs * 1e3
     max_y = max(avg_ys)
     ax.plot(
@@ -2152,17 +2152,17 @@ def graph_queue_across_bursts(
     save(
         graph_dir,
         prefix,
-        suffix="_".join(queue_name.split(" ")).lower() + "_depth_across_bursts",
+        suffix="_".join(queue_name.split(" ")).lower() + "_length_across_bursts",
     )
 
 
 if RUN:
-    INCAST_Q_DEPTH_ACROSS_BURSTS = get_queue_depth_across_bursts(
-        INCAST_Q_METRICS["depths"], NUM_BURSTS, INTERP_DELTA, PERCENTILES
+    INCAST_Q_length_ACROSS_BURSTS = get_queue_length_across_bursts(
+        INCAST_Q_METRICS["lengths"], NUM_BURSTS, INTERP_DELTA, PERCENTILES
     )
     graph_queue_across_bursts(
         "Incast Queue",
-        INCAST_Q_DEPTH_ACROSS_BURSTS,
+        INCAST_Q_length_ACROSS_BURSTS,
         MARKING_THRESHOLD,
         QUEUE_CAPACITY,
         GRAPH_DIR,
@@ -2218,9 +2218,9 @@ def get_all_metrics_for_exp(
             for start, end in burst_times
         ],
         "sender_to_flow_times_by_burst": sender_to_flow_times_by_burst,
-        "active_conns_by_burst": None
-        if (desired is not None and "active_conns_by_burst" not in desired)
-        else get_active_conns_by_burst(sender_to_flow_times_by_burst, num_bursts),
+        "active_flows_by_burst": None
+        if (desired is not None and "active_flows_by_burst" not in desired)
+        else get_active_flows_by_burst(sender_to_flow_times_by_burst, num_bursts),
         "ideal_sec": (
             # config["bytesPerSender"]
             # * config["numSenders"]
@@ -2229,7 +2229,7 @@ def get_all_metrics_for_exp(
             / (config["smallLinkBandwidthMbps"] * 1e6 / 8)
             + (6 * config["delayPerLinkUs"] / 1e6)
         ),
-        # depths, drops, marks -> [burst 1, burst 2, ..]
+        # lengths, drops, marks -> [burst 1, burst 2, ..]
         "incast_queue_by_burst": None
         if (desired is not None and "incast_queue_by_burst" not in desired)
         else incast_q_metrics,
@@ -2238,13 +2238,13 @@ def get_all_metrics_for_exp(
         else uplink_q_metrics,
         "incast_queue_across_bursts": None
         if (desired is not None and "incast_queue_across_bursts" not in desired)
-        else get_queue_depth_across_bursts(
-            incast_q_metrics["depths"], num_bursts, interp_delta, percentiles
+        else get_queue_length_across_bursts(
+            incast_q_metrics["lengths"], num_bursts, interp_delta, percentiles
         ),
         "uplink_queue_across_bursts": None
         if (desired is not None and "uplink_queue_by_burst" not in desired)
-        else get_queue_depth_across_bursts(
-            uplink_q_metrics["depths"], num_bursts, interp_delta, percentiles
+        else get_queue_length_across_bursts(
+            uplink_q_metrics["lengths"], num_bursts, interp_delta, percentiles
         ),
         "sender_to_cwnds_by_burst": None
         if (desired is not None and "sender_to_cwnds_by_burst" not in desired)
@@ -2293,28 +2293,28 @@ def get_all_metrics_for_exp(
         #     sender_to_rtts_by_burst, num_bursts, interp_delta
         # ),
         "incast_q_above_empty": calculate_time_at_or_above_threshold(
-            incast_q_metrics["depths"],
+            incast_q_metrics["lengths"],
             burst_times,
             1,
         ),
         "incast_q_above_mark": calculate_time_at_or_above_threshold(
-            incast_q_metrics["depths"],
+            incast_q_metrics["lengths"],
             burst_times,
             config["smallQueueMinThresholdPackets"],
         ),
         "incast_q_above_90": calculate_time_at_or_above_threshold(
-            incast_q_metrics["depths"],
+            incast_q_metrics["lengths"],
             burst_times,
             config["smallQueueSizePackets"] * 0.9,
         ),
-        "incast_q_avg_depth_by_burst": calculate_average_queue_depth(
-            incast_q_metrics["depths"],
+        "incast_q_avg_length_by_burst": calculate_average_queue_length(
+            incast_q_metrics["lengths"],
             interp_delta,
             config["smallLinkBandwidthMbps"] * 1e6,
             bytes_per_packet,
         ),
-        "uplink_q_avg_depth_by_burst": calculate_average_queue_depth(
-            uplink_q_metrics["depths"],
+        "uplink_q_avg_length_by_burst": calculate_average_queue_length(
+            uplink_q_metrics["lengths"],
             interp_delta,
             # config["largeLinkBandwidthMbps"] * 1e6,
             config["largeBurstLinkBandwidthMbps"] * 1e6,

@@ -27,7 +27,7 @@ from matplotlib import pyplot as plt
 
 import analysis
 
-PARALLEL = True
+PARALLEL = False
 COLORS_FRIENDLY_HEX = [
     "#d73027",  # red
     "#fc8d59",  # orange
@@ -36,7 +36,7 @@ COLORS_FRIENDLY_HEX = [
     "#4575b4",  # dark blue
     "grey",
 ]
-CONNSS = [50, 100, 150, 200, 500]
+FLOWSS = [50, 100, 150, 200, 500]
 DUR_MS = "15ms"
 DESIRED = {
     "incast_queue_across_bursts",
@@ -93,7 +93,7 @@ def load_all(sweep_dir, filt=None):
 
     print(f"Loading {len(exp_dirs)} experiments...")
     if PARALLEL:
-        with multiprocessing.Pool(processes=35) as pool:
+        with multiprocessing.Pool(processes=20) as pool:
             exp_to_data = dict(zip(exp_dirs, pool.map(load_one, exp_dirs)))
     else:
         exp_to_data = {exp_dir: load_one(exp_dir) for exp_dir in exp_dirs}
@@ -144,7 +144,7 @@ def graph_simple(
 
 
 def graph_avg_queue_length(exp_to_data, dur_ms, graph_dir):
-    connss = sorted(
+    flowss = sorted(
         list({data["config"]["numBurstSenders"] for data in exp_to_data.values()})
     )
     rwnds = [None] + sorted(
@@ -161,12 +161,12 @@ def graph_avg_queue_length(exp_to_data, dur_ms, graph_dir):
     for rwnd in rwnds:
         xs = []
         ys = []
-        for conns in connss:
+        for flows in flowss:
             data = [
                 data
                 for data in exp_to_data.values()
                 if (
-                    (data["config"]["numBurstSenders"] == conns)
+                    (data["config"]["numBurstSenders"] == flows)
                     and (
                         # No RWND
                         (rwnd is None and data["config"]["rwndStrategy"] == "none")
@@ -180,9 +180,9 @@ def graph_avg_queue_length(exp_to_data, dur_ms, graph_dir):
                     )
                 )
             ]
-            # if len(data) == 0:
-            #     print(f"looking for RWND {rwnd} and {conns} flows")
-            #     print("\n".join(sorted(exp_to_data.keys())))
+            if len(data) == 0:
+                print(f"looking for RWND {rwnd} and {flows} flows")
+                print("\n".join(sorted(exp_to_data.keys())))
             assert len(data) == 1, f"Expected 1 but found: {len(data)}"
             data = data[0]
             xs.append(data["config"]["numBurstSenders"])
@@ -202,7 +202,7 @@ def graph_avg_queue_length(exp_to_data, dur_ms, graph_dir):
 
 
 def graph_avg_tput(exp_to_data, dur_ms, graph_dir):
-    connss = sorted(
+    flowss = sorted(
         list({data["config"]["numBurstSenders"] for data in exp_to_data.values()})
     )
     rwnds = [None] + sorted(
@@ -219,12 +219,12 @@ def graph_avg_tput(exp_to_data, dur_ms, graph_dir):
     for rwnd in rwnds:
         xs = []
         ys = []
-        for conns in connss:
+        for flows in flowss:
             data = [
                 data
                 for data in exp_to_data.values()
                 if (
-                    (data["config"]["numBurstSenders"] == conns)
+                    (data["config"]["numBurstSenders"] == flows)
                     and (
                         # No RWND
                         (rwnd is None and data["config"]["rwndStrategy"] == "none")
@@ -389,7 +389,7 @@ def graph_fct(lines, graph_dir, dur_ms, fln):
 
 
 # Graph p95 in-flight data over time for various RWND thresholds
-def graph_p95_bytes_in_flight(exp_to_data, dur_ms, conns, graph_dir):
+def graph_p95_bytes_in_flight(exp_to_data, dur_ms, flows, graph_dir):
     fig, axes = analysis.get_axes()
     ax = axes[0]
 
@@ -399,7 +399,7 @@ def graph_p95_bytes_in_flight(exp_to_data, dur_ms, conns, graph_dir):
         for data in exp_to_data.values()
         if (
             data["config"]["rwndStrategy"] == "none"
-            and data["config"]["numBurstSenders"] == conns
+            and data["config"]["numBurstSenders"] == flows
         )
     ]
     assert len(none) == 1
@@ -417,7 +417,7 @@ def graph_p95_bytes_in_flight(exp_to_data, dur_ms, conns, graph_dir):
                         if (
                             data["config"]["rwndStrategy"] == "static"
                             and data["config"]["staticRwndBytes"] < 11000
-                            and data["config"]["numBurstSenders"] == conns
+                            and data["config"]["numBurstSenders"] == flows
                         )
                     ),
                     key=lambda p: p["config"]["staticRwndBytes"],
@@ -482,7 +482,7 @@ def graph_p95_bytes_in_flight(exp_to_data, dur_ms, conns, graph_dir):
 
 
 # Graph total in-flight data over time for various RWND thresholds
-def graph_total_inflight(exp_to_data, dur_ms, conns, graph_dir):
+def graph_total_inflight(exp_to_data, dur_ms, flows, graph_dir):
     fig, axes = analysis.get_axes()
     ax = axes[0]
 
@@ -492,7 +492,7 @@ def graph_total_inflight(exp_to_data, dur_ms, conns, graph_dir):
         for data in exp_to_data.values()
         if (
             data["config"]["rwndStrategy"] == "none"
-            and data["config"]["numBurstSenders"] == conns
+            and data["config"]["numBurstSenders"] == flows
         )
     ]
     assert len(none) == 1
@@ -510,7 +510,7 @@ def graph_total_inflight(exp_to_data, dur_ms, conns, graph_dir):
                         if (
                             data["config"]["rwndStrategy"] == "static"
                             and data["config"]["staticRwndBytes"] < 11000
-                            and data["config"]["numBurstSenders"] == conns
+                            and data["config"]["numBurstSenders"] == flows
                         )
                     ),
                     key=lambda p: p["config"]["staticRwndBytes"],
@@ -640,11 +640,16 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
 
     # Average queue length vs. number of flows; Line for each RWND clamp ###########################
 
-    print("Average queue length vs. RWND clamp:")
+    print(
+        f"Average queue length vs. flow count for duration {dur_ms}ms, for various RWND clamps:"
+    )
     graph_avg_queue_length(exp_to_data, dur_ms, graph_dir)
 
     # Average throughput vs. number of flows; Line for each RWND clamp ############################
 
+    print(
+        f"Average throughput vs. flow count for duration {dur_ms}ms, for various RWND clamps:"
+    )
     graph_avg_tput(exp_to_data, dur_ms, graph_dir)
 
     # Queue length - Special cases #################################################################
@@ -662,6 +667,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
             xs, avg_ys, _, _, _, _, _ = data["incast_queue_across_bursts"]
             lines.append((xs, avg_ys, data["config"]["numBurstSenders"]))
 
+        print(f"Queue length over time for duration {dur_ms}ms, no RWND:")
         graph_queue(
             lines,
             dur_ms,
@@ -674,16 +680,22 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
             legend_title="Flow count",
         )
 
-    for conns in CONNSS:
-        print(conns)
+    for flows in FLOWSS:
+        print(flows)
 
         # P95 per-flow in-flight data across bursts ###############################################
 
-        graph_p95_bytes_in_flight(exp_to_data, dur_ms, conns, graph_dir)
+        print(
+            f"p95 (across senders) in-flight data for duration {dur_ms}ms and {flows} flows, various RWND clamps:"
+        )
+        graph_p95_bytes_in_flight(exp_to_data, dur_ms, flows, graph_dir)
 
         # Total in-flight data across bursts ######################################################
 
-        graph_total_inflight(exp_to_data, dur_ms, conns, graph_dir)
+        print(
+            f"Total in-flight data for duration {dur_ms}ms and {flows} flows, various RWND clamps:"
+        )
+        graph_total_inflight(exp_to_data, dur_ms, flows, graph_dir)
 
         # FCT #####################################################################################
 
@@ -693,7 +705,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
             data
             for data in exp_to_data.values()
             if (
-                data["config"]["numBurstSenders"] == conns
+                data["config"]["numBurstSenders"] == flows
                 and data["config"]["rwndStrategy"] == "none"
             )
         ]
@@ -713,6 +725,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
         # (FCTs, label)
         lines = [(fcts, None)]
 
+        print(f"CDF of FCT for duration {dur_ms}ms and {flows} flows, no RWND:")
         graph_fct(
             lines,
             graph_dir,
@@ -725,7 +738,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
         datas = [
             data
             for data in exp_to_data.values()
-            if data["config"]["numBurstSenders"] == conns
+            if data["config"]["numBurstSenders"] == flows
         ]
         # Add a line for No RWND tuning
         none = [data for data in datas if data["config"]["rwndStrategy"] == "none"]
@@ -779,7 +792,10 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
                 )
             )
 
-        graph_fct(lines, graph_dir, dur_ms, f"staticRwnd_{dur_ms}ms_{conns}flows_fct")
+        print(
+            f"CDF of FCT for duration {dur_ms}ms and {flows} flows, for various RWND clamps:"
+        )
+        graph_fct(lines, graph_dir, dur_ms, f"staticRwnd_{dur_ms}ms_{flows}flows_fct")
 
         # Queue length #############################################################################
 
@@ -788,7 +804,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
         datas = [
             data
             for data in exp_to_data.values()
-            if data["config"]["numBurstSenders"] == conns
+            if data["config"]["numBurstSenders"] == flows
         ]
         # Add a line for No RWND tuning
         none = [data for data in datas if data["config"]["rwndStrategy"] == "none"]
@@ -799,13 +815,16 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
         xs = np.asarray(xs)
         lines = [(xs, avg_ys, "queue length")]
 
+        print(
+            f"Queue length over time for duration {dur_ms}ms and {flows} flows, no RWND:"
+        )
         graph_queue(
             lines,
             dur_ms,
             ecn_thresh_packets,
             queue_capacity_packets,
             graph_dir,
-            prefix=f"noRwnd_{dur_ms}ms_{conns}flows",
+            prefix=f"noRwnd_{dur_ms}ms_{flows}flows",
             suffix="incast_queue",
             ncols=2,
         )
@@ -815,7 +834,7 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
         datas = [
             data
             for data in exp_to_data.values()
-            if data["config"]["numBurstSenders"] == conns
+            if data["config"]["numBurstSenders"] == flows
         ]
 
         # Add a line for No RWND tuning
@@ -860,6 +879,9 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
                 )
             )
 
+        print(
+            f"Queue length over time for duration {dur_ms}ms and {flows} flows, for various RWND clamps:"
+        )
         graph_queue(
             lines,
             dur_ms,
@@ -867,18 +889,18 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
             queue_capacity_packets,
             graph_dir,
             legend_title="RWND clamp (KB)",
-            prefix=f"staticRwnd_{dur_ms}ms_{conns}flows",
+            prefix=f"staticRwnd_{dur_ms}ms_{flows}flows",
             suffix="incast_queue",
             ncols=2 if dur_ms == 2 else 3,
         )
 
-    # for CONNS in CONNSS:
-    #     print(CONNS)
+    # for flowS in FLOWSS:
+    #     print(flowS)
     #     graph_sender_inflight(
     #         {
     #             exp: data
     #             for exp, data in exp_to_data.items()
-    #             if data["config"]["numBurstSenders"] == CONNS
+    #             if data["config"]["numBurstSenders"] == flowS
     #         },
     #         SWEEP_DIR,
     #         2048
@@ -897,10 +919,10 @@ def load_duration(sweep_dir, dur_ms, reload):
                 # and c["numBurstSenders"] < 1000
                 and c["smallLinkBandwidthMbps"] == 10000
                 and c["smallQueueMinThresholdPackets"] == 65
-                # and c["smallQueueSizePackets"] == 667
-                and c["smallQueueSizePackets"] == 1334
+                and c["smallQueueSizePackets"] == 667
+                # and c["smallQueueSizePackets"] == 1334
                 and c["rwndStrategy"] in ["none", "static"]
-                # and c["numBurstSenders"] in CONNSS
+                # and c["numBurstSenders"] in FLOWSS
             ),
         )
         print("Saving:", save_flp)
