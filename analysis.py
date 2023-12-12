@@ -1223,8 +1223,8 @@ def graph_aggregate_cwnd_across_bursts(
     # Right graph
     fig, axes = get_axes()
     ax = axes[0]
-    ax.plot(xs, avg_ys, label="avg", alpha=0.8)
-    max_y = 0
+    ax.plot(xs, avg_ys, linewidth=LINESIZE, label="avg", alpha=0.8)
+    max_y = max(avg_ys)
     for idx in range(1, percentiles_ys.shape[0]):
         prev = percentiles_ys[idx - 1]
         prev = prev / 1e3
