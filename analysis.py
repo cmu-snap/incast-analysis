@@ -28,7 +28,7 @@ from matplotlib import pyplot as plt
 # TODO: Add burstiness analysis from receiver pcap, flow level
 
 FONTSIZE = 15
-LINESIZE = 2
+LINESIZE = 3
 
 if __name__ == "__main__":
     RUN = True
@@ -37,7 +37,7 @@ else:
 
 # %%
 if RUN:
-    EXP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders/15ms-1000-0-11-TcpDctcp-10000mbps-1000000B-10icwnd-0offset-static-rwnd8192B-20tokens-4g-65ecn-1_0da"
+    EXP_DIR = "/data_ssd/ccanel/data/imc2024/sweep/background-senders/15ms-100-0-11-TcpDctcp-10000mbps-2000000B-10icwnd-0offset-none-rwnd0B-20tokens-4g-65ecn-1_0da"
     EXP = path.basename(EXP_DIR)
     GRAPH_DIR = path.join(EXP_DIR, "graphs")
     if not path.isdir(GRAPH_DIR):

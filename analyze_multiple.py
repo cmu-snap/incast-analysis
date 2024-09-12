@@ -36,7 +36,7 @@ COLORS_FRIENDLY_HEX = [
     "#4575b4",  # dark blue
     "grey",
 ]
-FLOWSS = [50, 100, 150, 200, 500]
+FLOWSS = [50, 100, 150, 200, 500, 1000]
 DUR_MS = "15ms"
 DESIRED = {
     "incast_queue_across_bursts",
@@ -119,7 +119,7 @@ def graph_simple(
             # COLORS_FRIENDLY_HEX[i],
             label=label,
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
         max_x = max(max_x, xs[-1])
         max_y = max(max_y, *ys)
@@ -269,10 +269,18 @@ def graph_queue(
     fig, axes = analysis.get_axes()
     ax = axes[0]
 
+    LINESTYLES: List[Any] = [
+        "solid",
+        "dashdot",
+        # (5, (10, 3)),
+        (0, (5, 7)),
+        (0, (3, 5, 1, 5)),
+    ]
+    
     # Plot a line for each RWND clamp.
     max_x = 0
     max_y = 0
-    for xs, ys, label in lines:
+    for idx, (xs, ys, label) in enumerate(lines):
         # xs = xs - xs[0]
         xs = xs * 1e3
         ax.plot(
@@ -281,7 +289,8 @@ def graph_queue(
             drawstyle="steps-post",
             label=label,
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            linestyle=LINESTYLES[idx],
+            alpha=0.9,
         )
         max_x = max(max_x, xs[-1])
         max_y = max(max_y, *ys)
@@ -290,11 +299,11 @@ def graph_queue(
     ax.plot(
         [0, max_x],
         [marking_threshold_packets] * 2,
-        label="ECN\nthreshold" if dur_ms == "2ms" else "ECN threshold",
+        label="ECN\nthreshold" if dur_ms == 2 else "ECN threshold",
         color="orange",
         linestyle="dashed",
         linewidth=analysis.LINESIZE,
-        alpha=0.7,
+        alpha=0.9,
     )
     # Draw a line at the queue capacity
     if max_y > capacity_packets / 2:
@@ -306,7 +315,7 @@ def graph_queue(
             color="red",
             linestyle="dotted",
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
         max_y = capacity_packets
     elif len(lines) == 1:
@@ -321,7 +330,9 @@ def graph_queue(
     ax.tick_params(axis="y", labelsize=analysis.FONTSIZE)
     ax.set_xlim(left=-0.01 * max_x, right=1.01 * max_x)
     ax.set_ylim(bottom=-0.01 * max_y, top=1.1 * max_y)
-    if dur_ms == "2ms":
+    print("dur_ms", dur_ms)
+    if dur_ms == 2:
+        print("putting legend outside")
         ax.legend(
             fontsize=analysis.FONTSIZE,
             ncols=ncols,
@@ -364,7 +375,7 @@ def graph_fct(lines, graph_dir, dur_ms, fln):
             np.cumsum(count / sum(count)),
             label=label,
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
 
     ax.set_xlabel("flow duration (ms)", fontsize=analysis.FONTSIZE)
@@ -452,7 +463,7 @@ def graph_p95_bytes_in_flight(exp_to_data, dur_ms, flows, graph_dir):
                 else round(data["config"]["staticRwndBytes"] / 1024)
             ),
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
         max_x = max(max_x, xs[-1])
         max_y = max(max_y, *ys)
@@ -551,7 +562,7 @@ def graph_total_inflight(exp_to_data, dur_ms, flows, graph_dir):
                 else round(data["config"]["staticRwndBytes"] / 1024)
             ),
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
         max_x = max(max_x, xs[-1])
         max_y = max(max_y, *total_ys)
@@ -605,7 +616,7 @@ def graph_sender_inflight(exp_to_data, dur_ms, graph_dir, clamp):
             xs,
             ys,
             linewidth=analysis.LINESIZE,
-            alpha=0.7,
+            alpha=0.9,
         )
         max_x = max(max_x, xs[-1])
         max_y = max(max_y, *ys)
@@ -664,6 +675,8 @@ def generate_graphs_for_duration(exp_to_data, dur_ms, graph_dir):
 
         lines = []
         for data in sorted(datas, key=lambda d: d["config"]["numBurstSenders"]):
+            if data["config"]["numBurstSenders"] not in {100, 150, 200, 500}:
+                continue
             xs, avg_ys, _, _, _, _, _ = data["incast_queue_across_bursts"]
             lines.append((xs, avg_ys, data["config"]["numBurstSenders"]))
 
@@ -915,13 +928,13 @@ def load_duration(sweep_dir, dur_ms, reload):
             sweep_dir,
             filt=lambda c: (
                 f"{dur_ms}ms" in c["outputDirectory"]
-                and c["numBurstSenders"] <= 1000
+                # and c["numBurstSenders"] <= 1000
                 # and c["numBurstSenders"] < 1000
-                and c["smallLinkBandwidthMbps"] == 10000
-                and c["smallQueueMinThresholdPackets"] == 65
-                and c["smallQueueSizePackets"] == 667
+                # and c["smallLinkBandwidthMbps"] == 10000
+                # and c["smallQueueMinThresholdPackets"] == 65
+                # and c["smallQueueSizePackets"] == 667
                 # and c["smallQueueSizePackets"] == 1334
-                and c["rwndStrategy"] in ["none", "static"]
+                # and c["rwndStrategy"] in ["none", "static"]
                 # and c["numBurstSenders"] in FLOWSS
             ),
         )
@@ -938,7 +951,7 @@ def load_duration(sweep_dir, dur_ms, reload):
 
 
 # %%
-SWEEP_DIR = "/data_ssd/ccanel/incast/sweep/background-senders"
+SWEEP_DIR = "/data_ssd/ccanel/data/imc2024/sweep/background-senders"
 GRAPH_DIR = path.join(SWEEP_DIR, "graphs")
 if not path.isdir(GRAPH_DIR):
     os.makedirs(GRAPH_DIR)
