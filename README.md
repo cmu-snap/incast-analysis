@@ -1,5 +1,5 @@
 # incast-analysis
-This repository contains analysis code corresponding to the incast bursts experiments in the following paper, which were conducted using [cmu-snap/ns-3-dev-git](https://github.com/cmu-snap/ns-3-dev-git), tag [imc_2024](https://github.com/cmu-snap/ns-3-dev-git/tree/imc_2024), file [scratch/incast.cc](https://github.com/cmu-snap/ns-3-dev-git/blob/incast-project/scratch/incast.cc).
+This repository contains analysis code corresponding to the incast bursts experiments in the following paper, which were conducted using [cmu-snap/ns-3-dev-git](https://github.com/cmu-snap/ns-3-dev-git), tag [imc_2024](https://github.com/cmu-snap/ns-3-dev-git/tree/imc_2024), file [scratch/incast.cc](https://github.com/cmu-snap/ns-3-dev-git/blob/imc_2024/scratch/incast.cc).
 
 ## Paper: _Understanding Incast Bursts in Modern Datacenters_
 Christopher Canel, Balasubramanian Madhavan, Srikanth Sundaresan, Neil Spring, Prashanth Kannan, Ying Zhang, Kevin Lin, and Srinivasan Seshan. 2024. Understanding Incast Bursts in Modern Datacenters. In Proceedings of the 2024 ACM on Internet Measurement Conference (IMC '24). Association for Computing Machinery, New York, NY, USA, 674–680. https://doi.org/10.1145/3646547.3689028
