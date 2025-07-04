@@ -6,11 +6,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.15.2
+#       jupytext_version: 1.17.2
 #   kernelspec:
-#     display_name: incast-analysis-venv
+#     display_name: Python 3 (ipykernel)
 #     language: python
-#     name: incast-analysis-venv
+#     name: python3
 # ---
 
 # %% editable=true slideshow={"slide_type": ""}
